@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+dist/
+.swiftpm/
+Packages/
+xcuserdata/
+DerivedData/
+*.dSYM/
+Resources/AppIcon.icns
+Resources/Icon.iconset/
