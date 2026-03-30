@@ -1,6 +1,6 @@
 import Foundation
 
-enum StorageNodeKind: String, Hashable {
+enum StorageNodeKind: String, Hashable, Sendable {
     case root
     case volume
     case section
@@ -10,7 +10,7 @@ enum StorageNodeKind: String, Hashable {
     case remainder
 }
 
-enum StorageInspectionMode: String, CaseIterable, Identifiable, Hashable {
+enum StorageInspectionMode: String, CaseIterable, Identifiable, Hashable, Sendable {
     case visible
     case hidden
     case admin
@@ -34,7 +34,7 @@ enum StorageInspectionMode: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-enum StorageVolumeKind: String, Hashable {
+enum StorageVolumeKind: String, Hashable, Sendable {
     case startup
     case internalDrive
     case externalDrive
@@ -62,7 +62,7 @@ enum StorageVolumeKind: String, Hashable {
     }
 }
 
-enum StorageVolumeScanState: String, Hashable {
+enum StorageVolumeScanState: String, Hashable, Sendable {
     case scanned
     case manualRequired
 
@@ -81,7 +81,7 @@ enum StorageVolumeScanState: String, Hashable {
     }
 }
 
-struct StorageSection: Identifiable, Hashable {
+struct StorageSection: Identifiable, Hashable, Sendable {
     let title: String
     let icon: String
     let sizeBytes: UInt64
@@ -90,7 +90,7 @@ struct StorageSection: Identifiable, Hashable {
     var id: String { title }
 }
 
-struct StorageVolume: Identifiable, Hashable {
+struct StorageVolume: Identifiable, Hashable, Sendable {
     let name: String
     let url: URL
     let totalBytes: UInt64
@@ -120,7 +120,7 @@ struct StorageVolume: Identifiable, Hashable {
     }
 }
 
-struct LargeFileEntry: Identifiable, Hashable {
+struct LargeFileEntry: Identifiable, Hashable, Sendable {
     let url: URL
     let displayName: String
     let sizeBytes: UInt64
@@ -130,7 +130,7 @@ struct LargeFileEntry: Identifiable, Hashable {
     var isAppBundle: Bool { url.pathExtension.lowercased() == "app" }
 }
 
-struct StorageInsight: Identifiable, Hashable {
+struct StorageInsight: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let subtitle: String
@@ -141,7 +141,7 @@ struct StorageInsight: Identifiable, Hashable {
     let requiresAdminContext: Bool
 }
 
-struct StorageNode: Identifiable, Hashable {
+struct StorageNode: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let icon: String
@@ -187,7 +187,7 @@ struct StorageNode: Identifiable, Hashable {
     }
 }
 
-struct StorageReport: Hashable {
+struct StorageReport: Hashable, Sendable {
     let sections: [StorageSection]
     let largeFiles: [LargeFileEntry]
     let explorerRoot: StorageNode
