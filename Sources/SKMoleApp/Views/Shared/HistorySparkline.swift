@@ -42,6 +42,7 @@ struct HistorySparkline: View {
             }
         }
         .frame(height: 120)
+        .allowsHitTesting(false)
     }
 
     private func plotPoints(in size: CGSize) -> [CGPoint] {

@@ -98,59 +98,81 @@ private struct StorageSpaceCard: View {
         return min(Double(node.sizeBytes) / Double(totalBytes), 1)
     }
 
+    private var isInteractive: Bool {
+        node.isDrillable || node.canReveal
+    }
+
     var body: some View {
-        Button {
-            onOpen(node)
-        } label: {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top) {
-                    Label(node.name, systemImage: node.icon)
-                        .font(.headline)
-                        .lineLimit(2)
-
-                    Spacer(minLength: 8)
-
-                    Text(percentageText)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.white.opacity(0.18)))
+        Group {
+            if isInteractive {
+                Button {
+                    onOpen(node)
+                } label: {
+                    cardBody
                 }
-
-                Text(ByteFormatting.format(node.sizeBytes))
-                    .font(.title3.weight(.bold))
-
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.white.opacity(0.18))
-
-                        Capsule()
-                            .fill(Color.white.opacity(0.95))
-                            .frame(width: max(proxy.size.width * progressFraction, 10))
-                    }
-                }
-                .frame(height: 10)
-
-                Spacer(minLength: 0)
-
-                HStack(spacing: 6) {
-                    Text(node.isDrillable ? "Drill Down" : "Open")
-                    Image(systemName: node.isDrillable ? "arrow.down.right.and.arrow.up.left" : "eye")
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.92))
+                .buttonStyle(.plain)
+            } else {
+                cardBody
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-            .foregroundStyle(.white)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(StorageSpaceColor.color(for: node.id))
-            )
         }
-        .buttonStyle(.plain)
         .help(node.isDrillable ? "Drill into \(node.name)" : node.name)
+    }
+
+    private var cardBody: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                Label(node.name, systemImage: node.icon)
+                    .font(.headline)
+                    .lineLimit(2)
+
+                Spacer(minLength: 8)
+
+                Text(percentageText)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.18)))
+            }
+
+            Text(ByteFormatting.format(node.sizeBytes))
+                .font(.title3.weight(.bold))
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.18))
+
+                    Capsule()
+                        .fill(Color.white.opacity(0.95))
+                        .frame(width: max(proxy.size.width * progressFraction, 10))
+                }
+            }
+            .frame(height: 10)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 6) {
+                if node.isDrillable {
+                    Text("Drill Down")
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                } else if node.canReveal {
+                    Text("Open")
+                    Image(systemName: "eye")
+                } else {
+                    Text("Summary")
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.white.opacity(0.92))
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        .foregroundStyle(.white)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(StorageSpaceColor.color(for: node.id))
+        )
     }
 }
 

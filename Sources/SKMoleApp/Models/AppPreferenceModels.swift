@@ -3,6 +3,8 @@ import Foundation
 enum StartupPreference: String, CaseIterable, Identifiable {
     case rememberLast
     case dashboard
+    case homebrew
+    case quarantine
     case smartCare
     case cleanup
     case uninstall
@@ -15,6 +17,8 @@ enum StartupPreference: String, CaseIterable, Identifiable {
         switch self {
         case .rememberLast: "Remember last section"
         case .dashboard: "Always open Dashboard"
+        case .homebrew: "Always open Homebrew"
+        case .quarantine: "Always open Quarantine"
         case .smartCare: "Always open Smart Care"
         case .cleanup: "Always open Cleanup"
         case .uninstall: "Always open Uninstaller"
@@ -29,6 +33,10 @@ enum StartupPreference: String, CaseIterable, Identifiable {
             return lastSelection ?? .dashboard
         case .dashboard:
             return .dashboard
+        case .homebrew:
+            return .homebrew
+        case .quarantine:
+            return .quarantine
         case .smartCare:
             return .smartCare
         case .cleanup:

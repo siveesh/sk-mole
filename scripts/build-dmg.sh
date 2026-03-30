@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="SK Mole.app"
 APP_PATH="$DIST_DIR/$APP_NAME"
+README_SOURCE="$ROOT_DIR/README.md"
 INFO_PLIST="$ROOT_DIR/Resources/Bundling/Info.plist.template"
 ICON_PATH="$ROOT_DIR/Resources/AppIcon.icns"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
@@ -29,6 +30,9 @@ cleanup() {
 trap cleanup EXIT
 
 cp -R "$APP_PATH" "$STAGING_DIR/$APP_NAME"
+if [[ -f "$README_SOURCE" ]]; then
+    cp "$README_SOURCE" "$STAGING_DIR/README.md"
+fi
 ln -s /Applications "$STAGING_DIR/Applications"
 
 if [[ -f "$ICON_PATH" ]]; then

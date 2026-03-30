@@ -4,7 +4,7 @@ public enum PrivilegedHelperConstants {
     public static let daemonLabel = "com.siveesh.skmole.privilegedhelper"
     public static let plistName = "com.siveesh.skmole.privilegedhelper.plist"
     public static let helperExecutableName = "com.siveesh.skmole.privilegedhelper"
-    public static let bundleProgram = "Contents/Library/LaunchServices/\(helperExecutableName)"
+    public static let bundleProgram = "Contents/Library/HelperTools/\(helperExecutableName)"
 }
 
 public enum MenuBarHelperConstants {

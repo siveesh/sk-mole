@@ -12,6 +12,11 @@ final class AppModel: ObservableObject {
         static let menuBarCompanionEnabled = "skmole.menuBarCompanionEnabled"
         static let showFullDiskAccessReminders = "skmole.showFullDiskAccessReminders"
         static let storageInspectionMode = "skmole.storageInspectionMode"
+        static let storageFocusMode = "skmole.storageFocusMode"
+        static let storageMinimumSize = "skmole.storageMinimumSize"
+        static let storageCollapseClutter = "skmole.storageCollapseClutter"
+        static let networkResolveHostnames = "skmole.networkResolveHostnames"
+        static let networkIncludeListeningSockets = "skmole.networkIncludeListeningSockets"
     }
 
     private enum HistoryLimit {
@@ -86,11 +91,68 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(storageInspectionMode.rawValue, forKey: PreferenceKey.storageInspectionMode)
         }
     }
+    @Published var storageFocusMode: StorageFocusMode = .balanced {
+        didSet {
+            UserDefaults.standard.set(storageFocusMode.rawValue, forKey: PreferenceKey.storageFocusMode)
+        }
+    }
+    @Published var storageMinimumSize: StorageMinimumSizeFilter = .all {
+        didSet {
+            UserDefaults.standard.set(storageMinimumSize.rawValue, forKey: PreferenceKey.storageMinimumSize)
+        }
+    }
+    @Published var storageCollapseCommonClutter = true {
+        didSet {
+            UserDefaults.standard.set(storageCollapseCommonClutter, forKey: PreferenceKey.storageCollapseClutter)
+        }
+    }
     @Published var selectedStorageVolumeID: String?
     @Published var storageVolumeCurrentNode: StorageNode?
     @Published var storageVolumeBreadcrumb: [StorageNode] = []
     @Published var storageVolumeBusy = false
     @Published var storageVolumeError: String?
+
+    @Published var networkReport: NetworkInspectorReport?
+    @Published var networkBusy = false
+    @Published var networkError: String?
+    @Published var networkResolveHostnames = false {
+        didSet {
+            UserDefaults.standard.set(networkResolveHostnames, forKey: PreferenceKey.networkResolveHostnames)
+        }
+    }
+    @Published var networkIncludeListeningSockets = true {
+        didSet {
+            UserDefaults.standard.set(networkIncludeListeningSockets, forKey: PreferenceKey.networkIncludeListeningSockets)
+        }
+    }
+
+    @Published var quarantinedApplications: [QuarantinedApplication] = []
+    @Published var quarantineBusy = false
+    @Published var quarantineError: String?
+    @Published var quarantineProgress: ScanProgress?
+    @Published var quarantineSearch = ""
+    @Published var selectedQuarantinedApp: QuarantinedApplication?
+    @Published var quarantineBusyActionID: String?
+    @Published var quarantineLogs: [OptimizationLog] = []
+
+    @Published var homebrewInventory: HomebrewInventory?
+    @Published var homebrewBusy = false
+    @Published var homebrewSearchBusy = false
+    @Published var homebrewDetailBusy = false
+    @Published var homebrewError: String?
+    @Published var homebrewSearchQuery = ""
+    @Published var homebrewInstalledFilter = ""
+    @Published var homebrewPackageFilter: HomebrewPackageListFilter = .all
+    @Published var homebrewSearchResults: [HomebrewPackageSearchResult] = HomebrewPackageSearchResult.featured
+    @Published var homebrewSelectedPackageDetail: HomebrewPackageDetail?
+    @Published var homebrewSelectedFallbackResult: HomebrewPackageSearchResult?
+    @Published var homebrewBusyActionID: String?
+    @Published var homebrewDoctorIssues: [HomebrewDoctorIssue] = []
+    @Published var homebrewDoctorLastOutput: String?
+    @Published var homebrewLogs: [OptimizationLog] = []
+    @Published var gitHubCLIInventory: GitHubCLIInventory?
+    @Published var gitHubCLIBusy = false
+    @Published var gitHubCLIError: String?
 
     @Published var optimizationLogs: [OptimizationLog] = []
     @Published var optimizationBusyActionID: String?
@@ -108,25 +170,47 @@ final class AppModel: ObservableObject {
     private lazy var cleanupScanner = CleanupScanner(guardService: guardService, sizer: sizer)
     private lazy var storageAnalyzer = StorageAnalyzer(guardService: guardService, sizer: sizer)
     private lazy var appInventory = AppInventoryService(guardService: guardService, sizer: sizer)
+    private lazy var networkInspector = NetworkInspectorService()
+    private lazy var quarantineAudit = QuarantineAuditService(guardService: guardService, sizer: sizer)
+    private lazy var homebrewService = HomebrewService()
+    private lazy var gitHubCLIService = GitHubCLIService()
     private let optimizer = OptimizationService()
     private let privilegedHelper = PrivilegedHelperManager()
     private let menuBarCompanion = MenuBarCompanionManager()
     private let metricsSampler = SystemMetricsSampler()
     private let companionSettingsStore = MenuBarCompanionSettingsStore()
+    private let storageFocusTransformer = StorageFocusTransformer()
+    private lazy var exportRegistry = MaintenanceExportRegistry()
     private var notificationObservers: [NSObjectProtocol] = []
 
     private var hasLoadedCleanup = false
     private var hasLoadedApplications = false
     private var hasLoadedStorage = false
+    private var hasLoadedNetwork = false
+    private var hasLoadedQuarantine = false
+    private var hasLoadedHomebrew = false
+    private var hasLoadedGitHubCLI = false
     private var hasLoadedPrivilegedHelper = false
+    private var hasPreparedInitialSelection = false
 
     private var cleanupRequestID = UUID()
     private var applicationsRequestID = UUID()
     private var storageRequestID = UUID()
+    private var networkRequestID = UUID()
+    private var quarantineRequestID = UUID()
+    private var homebrewRequestID = UUID()
+    private var homebrewSearchRequestID = UUID()
+    private var gitHubCLIRequestID = UUID()
 
     private var cleanupTask: Task<[CleanupCategorySummary], Never>?
     private var applicationsTask: Task<[InstalledApp], Never>?
     private var storageTask: Task<StorageReport, Never>?
+    private var networkTask: Task<NetworkInspectorReport, Never>?
+    private var quarantineTask: Task<[QuarantinedApplication], Never>?
+    private var homebrewTask: Task<HomebrewInventory, Never>?
+    private var homebrewSearchTask: Task<[HomebrewPackageSearchResult], Never>?
+    private var gitHubCLITask: Task<GitHubCLIInventory, Never>?
+    private var homebrewSelectedReference: HomebrewPackageReference?
 
     let optimizeActions = OptimizationService.defaultActions
     let privilegedMaintenanceTasks = PrivilegedMaintenanceTask.allCases
@@ -150,6 +234,122 @@ final class AppModel: ObservableObject {
 
     var selectedStorageVolumeDisplayName: String? {
         selectedStorageVolume?.name
+    }
+
+    var storageFocusConfiguration: StorageFocusConfiguration {
+        StorageFocusConfiguration(
+            mode: storageFocusMode,
+            minimumSize: storageMinimumSize,
+            collapseCommonClutter: storageCollapseCommonClutter
+        )
+    }
+
+    var homebrewStatus: HomebrewStatus {
+        homebrewInventory?.status ?? HomebrewStatus(executablePath: nil, version: nil, prefix: nil)
+    }
+
+    var filteredHomebrewPackages: [HomebrewInstalledPackage] {
+        let query = homebrewInstalledFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (homebrewInventory?.installedPackages ?? []).filter { package in
+            let matchesFilter: Bool
+            switch homebrewPackageFilter {
+            case .all:
+                matchesFilter = true
+            case .formulae:
+                matchesFilter = package.kind == .formula
+            case .casks:
+                matchesFilter = package.kind == .cask
+            case .outdated:
+                matchesFilter = package.isOutdated
+            }
+
+            guard matchesFilter else {
+                return false
+            }
+
+            guard !query.isEmpty else {
+                return true
+            }
+
+            return package.displayName.localizedCaseInsensitiveContains(query)
+                || package.token.localizedCaseInsensitiveContains(query)
+                || package.description.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var homebrewServices: [HomebrewServiceEntry] {
+        homebrewInventory?.services ?? []
+    }
+
+    var filteredQuarantinedApplications: [QuarantinedApplication] {
+        let query = quarantineSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return quarantinedApplications
+        }
+
+        return quarantinedApplications.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || ($0.bundleIdentifier?.localizedCaseInsensitiveContains(query) ?? false)
+                || $0.url.path.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var recommendedHomebrewPackages: [HomebrewPackageSearchResult] {
+        let installedReferences = Set(homebrewInventory?.installedPackages.map(\.reference) ?? [])
+
+        return HomebrewPackageSearchResult.featured.filter { result in
+            if installedReferences.contains(result.reference) {
+                return false
+            }
+
+            guard result.kind == .cask else {
+                return true
+            }
+
+            if let bundleIdentifier = result.bundleIdentifier,
+               NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil {
+                return false
+            }
+
+            if applications.contains(where: { $0.name.localizedCaseInsensitiveCompare(result.displayName) == .orderedSame }) {
+                return false
+            }
+
+            return true
+        }
+    }
+
+    var gitHubCLIStatus: GitHubCLIStatus {
+        gitHubCLIInventory?.status ?? GitHubCLIStatus(
+            executablePath: nil,
+            version: nil,
+            authStatusOutput: nil,
+            userLogin: nil,
+            userName: nil,
+            profileURL: nil,
+            host: nil
+        )
+    }
+
+    var gitHubRepositories: [GitHubRepositorySummary] {
+        gitHubCLIInventory?.repositories ?? []
+    }
+
+    var selectedHomebrewDetail: HomebrewPackageDetail? {
+        if let homebrewSelectedPackageDetail {
+            return homebrewSelectedPackageDetail
+        }
+
+        if let homebrewSelectedFallbackResult {
+            return .fallback(from: homebrewSelectedFallbackResult)
+        }
+
+        return nil
+    }
+
+    var availableExportPlugins: [MaintenanceExportPluginDescriptor] {
+        exportRegistry.availablePlugins(for: exportContext())
     }
 
     var smartCareScore: Int {
@@ -205,6 +405,7 @@ final class AppModel: ObservableObject {
         [
             MaintenanceQuickAction(id: "refresh-all", title: "Refresh All", subtitle: "Reload cleanup, uninstall, and storage data", icon: "arrow.clockwise"),
             MaintenanceQuickAction(id: "smart-care-report", title: "Export Dry Run", subtitle: "Save a maintenance report to disk", icon: "square.and.arrow.up"),
+            MaintenanceQuickAction(id: "network-inspector", title: "Network Inspector", subtitle: "Open the on-demand process and connection view", icon: "network"),
             MaintenanceQuickAction(id: "hidden-storage", title: "Hidden Space", subtitle: "Switch Storage into hidden-space mode", icon: "eye.slash"),
             MaintenanceQuickAction(id: "admin-storage", title: "Admin Space", subtitle: "Inspect VM, system caches, and backups", icon: "lock.rectangle.stack"),
             MaintenanceQuickAction(id: "review-trash-apps", title: "Review Trash Apps", subtitle: "Preview leftover removal for apps already in Trash", icon: "trash.square"),
@@ -223,6 +424,11 @@ final class AppModel: ObservableObject {
         self.menuBarCompanionEnabled = defaults.object(forKey: PreferenceKey.menuBarCompanionEnabled) as? Bool ?? true
         self.showFullDiskAccessReminders = defaults.object(forKey: PreferenceKey.showFullDiskAccessReminders) as? Bool ?? true
         self.storageInspectionMode = defaults.string(forKey: PreferenceKey.storageInspectionMode).flatMap(StorageInspectionMode.init(rawValue:)) ?? .visible
+        self.storageFocusMode = defaults.string(forKey: PreferenceKey.storageFocusMode).flatMap(StorageFocusMode.init(rawValue:)) ?? .balanced
+        self.storageMinimumSize = defaults.string(forKey: PreferenceKey.storageMinimumSize).flatMap(StorageMinimumSizeFilter.init(rawValue:)) ?? .all
+        self.storageCollapseCommonClutter = defaults.object(forKey: PreferenceKey.storageCollapseClutter) as? Bool ?? true
+        self.networkResolveHostnames = defaults.object(forKey: PreferenceKey.networkResolveHostnames) as? Bool ?? false
+        self.networkIncludeListeningSockets = defaults.object(forKey: PreferenceKey.networkIncludeListeningSockets) as? Bool ?? true
         self.menuBarCompanionSettings = companionSettingsStore.load()
 
         updateFullDiskAccessBannerVisibility()
@@ -243,7 +449,9 @@ final class AppModel: ObservableObject {
     }
 
     func prepareSelection() async {
-        await loadData(for: selection, force: autoRefreshOnOpen)
+        let shouldForceRefresh = !hasPreparedInitialSelection && autoRefreshOnOpen
+        hasPreparedInitialSelection = true
+        await loadData(for: selection, force: shouldForceRefresh)
     }
 
     func prepareMenuBar(forceRefresh: Bool = false) async {
@@ -277,6 +485,10 @@ final class AppModel: ObservableObject {
         if storageReport != nil {
             await loadStorage(force: true)
         }
+
+        if networkReport != nil {
+            await loadNetwork(force: true)
+        }
     }
 
     func refreshCleanup() async {
@@ -293,7 +505,7 @@ final class AppModel: ObservableObject {
 
         for candidate in candidates where candidate.safetyLevel != .protected {
             do {
-                try await guardService.moveToTrash(candidate.url, purpose: .cleanup)
+                try await guardService.removePermanently(candidate.url, purpose: .cleanup)
             } catch {
                 cleanupError = error.localizedDescription
             }
@@ -311,6 +523,36 @@ final class AppModel: ObservableObject {
 
     func refreshApplications() async {
         await loadApplications(force: true)
+    }
+
+    func refreshQuarantinedApplications() async {
+        await loadQuarantinedApplications(force: true)
+    }
+
+    func selectQuarantinedApplication(_ app: QuarantinedApplication) {
+        selection = .quarantine
+        selectedQuarantinedApp = app
+    }
+
+    func removeQuarantine(from apps: [QuarantinedApplication]) async {
+        let actionableApps = apps.filter { !$0.id.isEmpty }
+        guard !actionableApps.isEmpty else {
+            return
+        }
+
+        quarantineBusyActionID = actionableApps.count == 1 ? actionableApps[0].id : "bulk"
+        quarantineError = nil
+
+        let logs = await quarantineAudit.removeQuarantine(from: actionableApps)
+        quarantineLogs.insert(contentsOf: logs.reversed(), at: 0)
+
+        if let failedLog = logs.first(where: { !$0.succeeded }) {
+            quarantineError = failedLog.output
+        } else {
+            await loadQuarantinedApplications(force: true)
+        }
+
+        quarantineBusyActionID = nil
     }
 
     func selectApp(_ app: InstalledApp) async {
@@ -377,6 +619,55 @@ final class AppModel: ObservableObject {
             _ = await (refreshApps, refreshCleanup, refreshStorage)
         } catch {
             uninstallError = error.localizedDescription
+        }
+
+        uninstallBusy = false
+    }
+
+    func removeApplications(_ apps: [InstalledApp]) async {
+        let uniqueApps = Array(Dictionary(grouping: apps, by: \.id).compactMap(\.value.first))
+        guard !uniqueApps.isEmpty else { return }
+
+        uninstallBusy = true
+        uninstallError = nil
+
+        var failures: [String] = []
+
+        for app in uniqueApps {
+            do {
+                let preview = await defaultPreview(for: app)
+                try await appInventory.remove(preview)
+            } catch {
+                failures.append("\(app.name): \(error.localizedDescription)")
+            }
+        }
+
+        async let refreshApps: Void = loadApplications(force: true)
+        async let refreshCleanup: Void = loadCleanup(force: true)
+        async let refreshStorage: Void = hasLoadedStorage ? loadStorage(force: true) : ()
+        _ = await (refreshApps, refreshCleanup, refreshStorage)
+
+        if failures.isEmpty {
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Bulk App Removal",
+                    output: "Removed \(uniqueApps.count) app\(uniqueApps.count == 1 ? "" : "s") using preview-safe uninstall flows.",
+                    succeeded: true,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+        } else {
+            uninstallError = failures.joined(separator: "\n")
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Bulk App Removal",
+                    output: uninstallError ?? "Bulk removal failed.",
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
         }
 
         uninstallBusy = false
@@ -451,6 +742,9 @@ final class AppModel: ObservableObject {
             await refreshSmartCareInputs()
         case "smart-care-report":
             await exportDryRunReport()
+        case "network-inspector":
+            open(section: .network)
+            await loadNetwork(force: true)
         case "hidden-storage":
             setStorageInspectionMode(.hidden)
         case "admin-storage":
@@ -470,6 +764,253 @@ final class AppModel: ObservableObject {
 
     func refreshStorage() async {
         await loadStorage(force: true, manuallyScannedVolumeIDs: manualStorageScanTargets)
+    }
+
+    func storageFocusResult(for node: StorageNode) -> StorageFocusResult {
+        storageFocusTransformer.transform(node: node, configuration: storageFocusConfiguration)
+    }
+
+    func refreshNetwork() async {
+        await loadNetwork(force: true)
+    }
+
+    func refreshHomebrew() async {
+        await loadHomebrew(force: true)
+    }
+
+    func searchHomebrewPackages() async {
+        homebrewSearchTask?.cancel()
+        let requestID = UUID()
+        homebrewSearchRequestID = requestID
+        homebrewSearchBusy = true
+        homebrewError = nil
+
+        let query = homebrewSearchQuery
+        let service = homebrewService
+        let task = Task { [requestID] in
+            do {
+                return try await service.searchPackages(query: query)
+            } catch {
+                await MainActor.run {
+                    guard self.homebrewSearchRequestID == requestID else { return }
+                    self.homebrewError = error.localizedDescription
+                }
+
+                return HomebrewPackageSearchResult.featured
+            }
+        }
+        homebrewSearchTask = task
+
+        let results = await task.value
+        guard homebrewSearchRequestID == requestID else { return }
+
+        homebrewSearchResults = results
+        homebrewSearchBusy = false
+        homebrewSearchTask = nil
+    }
+
+    func selectHomebrewInstalledPackage(_ package: HomebrewInstalledPackage) async {
+        selection = .homebrew
+        homebrewSelectedPackageDetail = nil
+        homebrewSelectedFallbackResult = HomebrewPackageSearchResult(
+            reference: package.reference,
+            displayName: package.displayName,
+            description: package.description,
+            source: "Installed package",
+            bundleIdentifier: nil
+        )
+        await loadHomebrewPackageDetail(for: package.reference)
+    }
+
+    func selectHomebrewSearchResult(_ result: HomebrewPackageSearchResult) async {
+        selection = .homebrew
+        homebrewSelectedPackageDetail = nil
+        homebrewSelectedFallbackResult = result
+        await loadHomebrewPackageDetail(for: result.reference)
+    }
+
+    func openHomebrewInstallGuide() {
+        NSWorkspace.shared.open(HomebrewStatus.installGuideURL)
+    }
+
+    func launchHomebrewInstallerInTerminal() {
+        homebrewError = nil
+        launchTerminalCommand(HomebrewStatus.installCommand) { [weak self] message in
+            self?.homebrewError = message
+        }
+    }
+
+    func openHomebrewHomepage() {
+        guard let url = selectedHomebrewDetail?.homepage else {
+            return
+        }
+
+        NSWorkspace.shared.open(url)
+    }
+
+    func refreshGitHubCLI() async {
+        await loadGitHubCLI(force: true)
+    }
+
+    func installGitHubCLI() async {
+        guard homebrewStatus.isInstalled else {
+            homebrewError = "Install Homebrew first, then SK Mole can install GitHub CLI with brew."
+            return
+        }
+
+        let log = await executeHomebrewCommand(
+            arguments: ["install", "gh"],
+            actionTitle: "Install GitHub CLI",
+            actionID: "install:gh-cli"
+        )
+
+        if log.succeeded {
+            await loadGitHubCLI(force: true)
+        }
+    }
+
+    func launchGitHubCLILoginInTerminal() {
+        gitHubCLIError = nil
+        launchTerminalCommand(GitHubCLIStatus.authCommand) { [weak self] message in
+            self?.gitHubCLIError = message
+        }
+    }
+
+    func openGitHubCLIHomepage() {
+        NSWorkspace.shared.open(GitHubCLIStatus.homepageURL)
+    }
+
+    func openGitHubCLILoginGuide() {
+        NSWorkspace.shared.open(GitHubCLIStatus.authGuideURL)
+    }
+
+    func openGitHubPersonalAccessTokenPage() {
+        NSWorkspace.shared.open(GitHubCLIStatus.personalAccessTokenURL)
+    }
+
+    func openGitHubPersonalAccessTokenDocs() {
+        NSWorkspace.shared.open(GitHubCLIStatus.personalAccessTokenDocsURL)
+    }
+
+    func openGitHubRepository(_ repository: GitHubRepositorySummary) {
+        NSWorkspace.shared.open(repository.url)
+    }
+
+    func runHomebrewMaintenance(_ action: HomebrewMaintenanceAction) async {
+        let log = await executeHomebrewCommand(
+            arguments: action.arguments,
+            actionTitle: action.title,
+            actionID: "maintenance:\(action.id)"
+        )
+
+        guard action == .doctor else {
+            return
+        }
+
+        homebrewDoctorLastOutput = log.output
+        homebrewDoctorIssues = HomebrewService.parseDoctorIssues(from: log.output)
+    }
+
+    func installSelectedHomebrewPackage() async {
+        guard let detail = selectedHomebrewDetail else { return }
+        await executeHomebrewCommand(
+            arguments: installationArguments(for: detail.reference),
+            actionTitle: "Install \(detail.displayName)",
+            actionID: "install:\(detail.id)"
+        )
+    }
+
+    func upgradeSelectedHomebrewPackage() async {
+        guard let detail = selectedHomebrewDetail else { return }
+        await executeHomebrewCommand(
+            arguments: upgradeArguments(for: detail.reference),
+            actionTitle: "Upgrade \(detail.displayName)",
+            actionID: "upgrade:\(detail.id)"
+        )
+    }
+
+    func reinstallSelectedHomebrewPackage() async {
+        guard let detail = selectedHomebrewDetail else { return }
+        await executeHomebrewCommand(
+            arguments: reinstallArguments(for: detail.reference),
+            actionTitle: "Reinstall \(detail.displayName)",
+            actionID: "reinstall:\(detail.id)"
+        )
+    }
+
+    func uninstallSelectedHomebrewPackage() async {
+        guard let detail = selectedHomebrewDetail else { return }
+        await executeHomebrewCommand(
+            arguments: uninstallArguments(for: detail.reference),
+            actionTitle: "Uninstall \(detail.displayName)",
+            actionID: "uninstall:\(detail.id)"
+        )
+    }
+
+    func cleanupSelectedHomebrewPackage() async {
+        guard let detail = selectedHomebrewDetail else { return }
+        await executeHomebrewCommand(
+            arguments: ["cleanup", detail.token],
+            actionTitle: "Cleanup \(detail.displayName)",
+            actionID: "cleanup:\(detail.id)"
+        )
+    }
+
+    func runHomebrewServiceAction(_ verb: String, packageToken: String) async {
+        await executeHomebrewCommand(
+            arguments: ["services", verb, packageToken],
+            actionTitle: "brew services \(verb) \(packageToken)",
+            actionID: "service:\(verb):\(packageToken)"
+        )
+    }
+
+    func deleteHomebrewDoctorPath(_ path: HomebrewDoctorIssuePath) async {
+        let actionID = "doctor-delete:\(path.id)"
+        homebrewBusyActionID = actionID
+        homebrewError = nil
+
+        do {
+            try await guardService.removePermanently(URL(fileURLWithPath: path.path), purpose: .developerTooling)
+
+            homebrewLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Delete \(path.fileName)",
+                    output: "Removed \(path.path)",
+                    succeeded: true,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+
+            homebrewDoctorIssues = homebrewDoctorIssues.compactMap { issue in
+                let remainingPaths = issue.paths.filter { $0.path != path.path }
+                if issue.paths.isEmpty || remainingPaths.isEmpty {
+                    return nil
+                }
+
+                return HomebrewDoctorIssue(
+                    title: issue.title,
+                    summary: issue.summary,
+                    paths: remainingPaths,
+                    supportingLines: issue.supportingLines
+                )
+            }
+
+            await runHomebrewMaintenance(.doctor)
+        } catch {
+            homebrewError = error.localizedDescription
+            homebrewLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Delete \(path.fileName)",
+                    output: error.localizedDescription,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+        }
+
+        homebrewBusyActionID = nil
     }
 
     func focusStorageVolume(_ volume: StorageVolume) {
@@ -575,25 +1116,48 @@ final class AppModel: ObservableObject {
     }
 
     func refreshPrivilegedHelperState() async {
+        privilegedHelperBusy = true
         privilegedHelperError = nil
         privilegedHelperState = privilegedHelper.status()
+        privilegedHelperReachability = "Checking..."
 
         guard privilegedHelperState.isEnabled else {
             privilegedHelperReachability = privilegedHelperState.requiresApproval ? "Awaiting approval" : "Unavailable"
             hasLoadedPrivilegedHelper = true
             updateRecommendedActions()
+            privilegedHelperBusy = false
             return
         }
 
         do {
             privilegedHelperReachability = try await privilegedHelper.ping()
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Privileged Helper Status",
+                    output: privilegedHelperReachability,
+                    succeeded: true,
+                    timestamp: .now
+                ),
+                at: 0
+            )
         } catch {
             privilegedHelperReachability = "Unavailable"
-            privilegedHelperError = error.localizedDescription
+            let diagnosticMessage = await helperDiagnosticMessage(for: error)
+            privilegedHelperError = diagnosticMessage
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Privileged Helper Status",
+                    output: diagnosticMessage,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
         }
 
         hasLoadedPrivilegedHelper = true
         updateRecommendedActions()
+        privilegedHelperBusy = false
     }
 
     func registerPrivilegedHelper() async {
@@ -601,13 +1165,44 @@ final class AppModel: ObservableObject {
         privilegedHelperError = nil
 
         do {
-            privilegedHelperState = try privilegedHelper.register()
+            if privilegedHelperState.isEnabled, privilegedHelperReachability == "Unavailable" {
+                _ = try privilegedHelper.unregister()
+                privilegedHelperState = try privilegedHelper.register()
+                optimizationLogs.insert(
+                    OptimizationLog(
+                        actionTitle: "Reinstall Privileged Helper",
+                        output: privilegedHelperState.detail,
+                        succeeded: true,
+                        timestamp: .now
+                    ),
+                    at: 0
+                )
+            } else if !privilegedHelperState.isEnabled {
+                privilegedHelperState = try privilegedHelper.register()
+                optimizationLogs.insert(
+                    OptimizationLog(
+                        actionTitle: "Register Privileged Helper",
+                        output: privilegedHelperState.detail,
+                        succeeded: true,
+                        timestamp: .now
+                    ),
+                    at: 0
+                )
+            }
             await refreshPrivilegedHelperState()
         } catch {
             privilegedHelperError = error.localizedDescription
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Register Privileged Helper",
+                    output: error.localizedDescription,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            privilegedHelperBusy = false
         }
-
-        privilegedHelperBusy = false
     }
 
     func unregisterPrivilegedHelper() async {
@@ -616,12 +1211,29 @@ final class AppModel: ObservableObject {
 
         do {
             privilegedHelperState = try privilegedHelper.unregister()
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Unregister Privileged Helper",
+                    output: privilegedHelperState.detail,
+                    succeeded: true,
+                    timestamp: .now
+                ),
+                at: 0
+            )
             await refreshPrivilegedHelperState()
         } catch {
             privilegedHelperError = error.localizedDescription
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Unregister Privileged Helper",
+                    output: error.localizedDescription,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            privilegedHelperBusy = false
         }
-
-        privilegedHelperBusy = false
     }
 
     func runPrivilegedMaintenance(_ task: PrivilegedMaintenanceTask) async {
@@ -744,35 +1356,41 @@ final class AppModel: ObservableObject {
     }
 
     func exportDryRunReport() async {
-        let report = maintenanceReport()
-        let formatter = ISO8601DateFormatter()
-        let timestamp = formatter.string(from: report.createdAt).replacingOccurrences(of: ":", with: "-")
-        let fileName = "SK-Mole-Dry-Run-\(timestamp).json"
+        await export(using: .dryRunJSON)
+    }
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+    func exportFocusedStorageTree() async {
+        await export(using: .focusedStorageJSON)
+    }
 
-        guard let data = try? encoder.encode(report) else {
-            return
-        }
+    func exportFocusedStorageTree(for node: StorageNode) async {
+        await export(using: .focusedStorageJSON, storageNodeOverride: storageFocusResult(for: node).node)
+    }
 
-        let panel = NSSavePanel()
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = fileName
-        panel.allowedContentTypes = [UTType.json]
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
-
-        guard panel.runModal() == .OK, let destination = panel.url else {
-            return
-        }
+    func export(using pluginID: MaintenanceExportPluginID, storageNodeOverride: StorageNode? = nil) async {
+        let context = exportContext(storageNodeOverride: storageNodeOverride)
 
         do {
-            try data.write(to: destination, options: .atomic)
+            let document = try exportRegistry.export(plugin: pluginID, context: context)
+            let formatter = ISO8601DateFormatter()
+            let timestamp = formatter.string(from: context.maintenanceReport.createdAt).replacingOccurrences(of: ":", with: "-")
+            let fileName = "\(document.descriptor.suggestedBaseName)-\(timestamp).\(document.descriptor.fileExtension)"
+
+            let panel = NSSavePanel()
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = fileName
+            panel.allowedContentTypes = [document.descriptor.contentType]
+            panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+
+            guard panel.runModal() == .OK, let destination = panel.url else {
+                return
+            }
+
+            try document.data.write(to: destination, options: .atomic)
             optimizationLogs.insert(
                 OptimizationLog(
-                    actionTitle: "Export Dry Run Report",
-                    output: "Saved maintenance report to \(destination.path)",
+                    actionTitle: "Export: \(document.descriptor.title)",
+                    output: "Saved export to \(destination.path)",
                     succeeded: true,
                     timestamp: .now
                 ),
@@ -781,7 +1399,7 @@ final class AppModel: ObservableObject {
         } catch {
             optimizationLogs.insert(
                 OptimizationLog(
-                    actionTitle: "Export Dry Run Report",
+                    actionTitle: "Export",
                     output: error.localizedDescription,
                     succeeded: false,
                     timestamp: .now
@@ -859,6 +1477,16 @@ final class AppModel: ObservableObject {
             if force || !hasLoadedStorage {
                 await loadStorage(force: true)
             }
+        case .homebrew:
+            let shouldRefreshHomebrew = force || !hasLoadedHomebrew
+            let shouldRefreshGitHubCLI = force || !hasLoadedGitHubCLI
+            async let refreshHomebrew: Void = loadHomebrew(force: shouldRefreshHomebrew)
+            async let refreshGitHubCLI: Void = loadGitHubCLI(force: shouldRefreshGitHubCLI)
+            _ = await (refreshHomebrew, refreshGitHubCLI)
+        case .network:
+            await loadNetwork(force: force || !hasLoadedNetwork)
+        case .quarantine:
+            await loadQuarantinedApplications(force: force || !hasLoadedQuarantine)
         case .smartCare:
             let shouldRefreshCleanup = force || !hasLoadedCleanup
             let shouldRefreshApplications = force || !hasLoadedApplications
@@ -881,8 +1509,14 @@ final class AppModel: ObservableObject {
     }
 
     private func loadCleanup(force: Bool) async {
-        guard force || !hasLoadedCleanup else {
-            return
+        if !force {
+            guard !hasLoadedCleanup else {
+                return
+            }
+
+            guard cleanupTask == nil else {
+                return
+            }
         }
 
         cleanupTask?.cancel()
@@ -921,8 +1555,14 @@ final class AppModel: ObservableObject {
     }
 
     private func loadApplications(force: Bool) async {
-        guard force || !hasLoadedApplications else {
-            return
+        if !force {
+            guard !hasLoadedApplications else {
+                return
+            }
+
+            guard applicationsTask == nil else {
+                return
+            }
         }
 
         applicationsTask?.cancel()
@@ -974,6 +1614,61 @@ final class AppModel: ObservableObject {
         updateRecommendedActions()
     }
 
+    private func loadQuarantinedApplications(force: Bool) async {
+        if !force {
+            guard !hasLoadedQuarantine else {
+                return
+            }
+
+            guard quarantineTask == nil else {
+                return
+            }
+        }
+
+        quarantineTask?.cancel()
+        let requestID = UUID()
+        quarantineRequestID = requestID
+
+        quarantineBusy = true
+        quarantineError = nil
+        quarantineProgress = ScanProgress(
+            title: "Quarantine review",
+            detail: "Preparing quarantine scan",
+            completedUnits: 0,
+            totalUnits: 1
+        )
+
+        let audit = quarantineAudit
+        let task = Task { [requestID] in
+            await audit.discoverQuarantinedApplications { progress in
+                await MainActor.run {
+                    guard self.quarantineRequestID == requestID else { return }
+                    self.quarantineProgress = progress
+                }
+            }
+        }
+        quarantineTask = task
+
+        let discovered = await task.value
+        guard quarantineRequestID == requestID else { return }
+
+        quarantinedApplications = discovered
+        quarantineBusy = false
+        quarantineProgress = nil
+        quarantineTask = nil
+        hasLoadedQuarantine = true
+
+        if let selectedQuarantinedApp {
+            if let refreshedSelection = discovered.first(where: { $0.id == selectedQuarantinedApp.id }) {
+                self.selectedQuarantinedApp = refreshedSelection
+            } else {
+                self.selectedQuarantinedApp = nil
+            }
+        } else {
+            selectedQuarantinedApp = discovered.first
+        }
+    }
+
     private func loadStorage(force: Bool) async {
         await loadStorage(force: force, manuallyScannedVolumeIDs: [])
     }
@@ -987,8 +1682,14 @@ final class AppModel: ObservableObject {
     }
 
     private func loadStorage(force: Bool, manuallyScannedVolumeIDs: Set<String>) async {
-        guard force || !hasLoadedStorage else {
-            return
+        if !force {
+            guard !hasLoadedStorage else {
+                return
+            }
+
+            guard storageTask == nil else {
+                return
+            }
         }
 
         storageTask?.cancel()
@@ -1038,6 +1739,304 @@ final class AppModel: ObservableObject {
         }
 
         updateRecommendedActions()
+    }
+
+    private func loadNetwork(force: Bool) async {
+        if !force {
+            guard !hasLoadedNetwork else {
+                return
+            }
+
+            guard networkTask == nil else {
+                return
+            }
+        }
+
+        networkTask?.cancel()
+        let requestID = UUID()
+        networkRequestID = requestID
+
+        networkBusy = true
+        networkError = nil
+
+        let inspector = networkInspector
+        let resolveHostnames = networkResolveHostnames
+        let includeListening = networkIncludeListeningSockets
+        let task = Task { [requestID] in
+            do {
+                return try await inspector.scan(
+                    resolveHostnames: resolveHostnames,
+                    includeListening: includeListening
+                )
+            } catch {
+                await MainActor.run {
+                    guard self.networkRequestID == requestID else { return }
+                    self.networkError = error.localizedDescription
+                }
+
+                return NetworkInspectorReport(
+                    capturedAt: .now,
+                    resolvesHostnames: resolveHostnames,
+                    includesListeningSockets: includeListening,
+                    interfaces: [],
+                    processes: [],
+                    connections: [],
+                    remoteHosts: []
+                )
+            }
+        }
+        networkTask = task
+
+        let report = await task.value
+        guard networkRequestID == requestID else { return }
+
+        networkReport = report
+        networkBusy = false
+        networkTask = nil
+        hasLoadedNetwork = true
+        updateRecommendedActions()
+    }
+
+    private func loadHomebrew(force: Bool) async {
+        if !force {
+            guard !hasLoadedHomebrew else {
+                return
+            }
+
+            guard homebrewTask == nil else {
+                return
+            }
+        }
+
+        homebrewTask?.cancel()
+        let requestID = UUID()
+        homebrewRequestID = requestID
+
+        homebrewBusy = true
+        homebrewError = nil
+
+        let service = homebrewService
+        let task = Task { [requestID] in
+            do {
+                return try await service.loadInventory()
+            } catch {
+                await MainActor.run {
+                    guard self.homebrewRequestID == requestID else { return }
+                    self.homebrewError = error.localizedDescription
+                }
+
+                return HomebrewInventory(
+                    status: HomebrewStatus(executablePath: nil, version: nil, prefix: nil),
+                    installedPackages: [],
+                    services: [],
+                    lastUpdated: .now
+                )
+            }
+        }
+        homebrewTask = task
+
+        let inventory = await task.value
+        guard homebrewRequestID == requestID else { return }
+
+        homebrewInventory = inventory
+        homebrewBusy = false
+        homebrewTask = nil
+        hasLoadedHomebrew = true
+
+        if homebrewSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            homebrewSearchResults = HomebrewPackageSearchResult.featured
+        }
+
+        if let reference = homebrewSelectedReference {
+            await loadHomebrewPackageDetail(for: reference)
+        } else if let firstPackage = inventory.installedPackages.first {
+            await selectHomebrewInstalledPackage(firstPackage)
+        }
+    }
+
+    private func loadGitHubCLI(force: Bool) async {
+        if !force {
+            guard !hasLoadedGitHubCLI else {
+                return
+            }
+
+            guard gitHubCLITask == nil else {
+                return
+            }
+        }
+
+        gitHubCLITask?.cancel()
+        let requestID = UUID()
+        gitHubCLIRequestID = requestID
+
+        gitHubCLIBusy = true
+        gitHubCLIError = nil
+
+        let service = gitHubCLIService
+        let task = Task { [requestID] in
+            do {
+                return try await service.loadInventory()
+            } catch {
+                await MainActor.run {
+                    guard self.gitHubCLIRequestID == requestID else { return }
+                    self.gitHubCLIError = error.localizedDescription
+                }
+
+                return GitHubCLIInventory(
+                    status: GitHubCLIStatus(
+                        executablePath: nil,
+                        version: nil,
+                        authStatusOutput: nil,
+                        userLogin: nil,
+                        userName: nil,
+                        profileURL: nil,
+                        host: nil
+                    ),
+                    repositories: [],
+                    lastUpdated: .now
+                )
+            }
+        }
+        gitHubCLITask = task
+
+        let inventory = await task.value
+        guard gitHubCLIRequestID == requestID else { return }
+
+        gitHubCLIInventory = inventory
+        gitHubCLIBusy = false
+        gitHubCLITask = nil
+        hasLoadedGitHubCLI = true
+    }
+
+    private func loadHomebrewPackageDetail(for reference: HomebrewPackageReference) async {
+        homebrewSelectedReference = reference
+        homebrewDetailBusy = true
+
+        do {
+            let detail = try await homebrewService.loadDetail(for: reference)
+            guard homebrewSelectedReference == reference else { return }
+            homebrewSelectedPackageDetail = detail
+            homebrewError = nil
+        } catch {
+            guard homebrewSelectedReference == reference else { return }
+            homebrewSelectedPackageDetail = nil
+
+            if homebrewStatus.isInstalled {
+                homebrewError = error.localizedDescription
+            }
+        }
+
+        homebrewDetailBusy = false
+    }
+
+    @discardableResult
+    private func executeHomebrewCommand(
+        arguments: [String],
+        actionTitle: String,
+        actionID: String
+    ) async -> OptimizationLog {
+        homebrewBusyActionID = actionID
+        homebrewError = nil
+
+        let log = await homebrewService.run(arguments: arguments, actionTitle: actionTitle)
+        homebrewLogs.insert(log, at: 0)
+
+        if log.succeeded {
+            await loadHomebrew(force: true)
+        } else {
+            homebrewError = log.output
+        }
+
+        homebrewBusyActionID = nil
+        return log
+    }
+
+    private func launchTerminalCommand(_ command: String, onError: @escaping (String) -> Void) {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("skmole-terminal", isDirectory: true)
+        let scriptURL = tempDirectory.appendingPathComponent("skmole-\(UUID().uuidString).command")
+        let script = """
+        #!/bin/zsh
+        export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+        clear
+        echo "SK Mole"
+        echo
+        \(command)
+        status=$?
+        echo
+        if [ "$status" -eq 0 ]; then
+            echo "Command finished successfully."
+        else
+            echo "Command failed with exit code $status."
+        fi
+        echo
+        echo "Press Return to close this window."
+        read -r
+        exit "$status"
+        """
+
+        do {
+            try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true, attributes: nil)
+            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+            guard NSWorkspace.shared.open(scriptURL) else {
+                onError("SK Mole could not open Terminal for this command. You can run it manually:\n\(command)")
+                return
+            }
+        } catch {
+            onError(error.localizedDescription)
+        }
+    }
+
+    private func installationArguments(for reference: HomebrewPackageReference) -> [String] {
+        switch reference.kind {
+        case .formula:
+            ["install", reference.token]
+        case .cask:
+            ["install", "--cask", reference.token]
+        }
+    }
+
+    private func upgradeArguments(for reference: HomebrewPackageReference) -> [String] {
+        switch reference.kind {
+        case .formula:
+            ["upgrade", reference.token]
+        case .cask:
+            ["upgrade", "--cask", reference.token]
+        }
+    }
+
+    private func reinstallArguments(for reference: HomebrewPackageReference) -> [String] {
+        switch reference.kind {
+        case .formula:
+            ["reinstall", reference.token]
+        case .cask:
+            ["reinstall", "--cask", reference.token]
+        }
+    }
+
+    private func uninstallArguments(for reference: HomebrewPackageReference) -> [String] {
+        switch reference.kind {
+        case .formula:
+            ["uninstall", reference.token]
+        case .cask:
+            ["uninstall", "--cask", reference.token]
+        }
+    }
+
+    private func helperDiagnosticMessage(for error: Error) async -> String {
+        let helper = privilegedHelper
+        let diagnostics = await Task.detached(priority: .utility) {
+            helper.diagnosticSummary()
+        }.value
+
+        return [error.localizedDescription, diagnostics]
+            .compactMap { value in
+                guard let value else { return nil }
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: "\n")
     }
 
     private func record(snapshot: SystemMetricSnapshot) {
@@ -1130,8 +2129,20 @@ final class AppModel: ObservableObject {
             cleanupCategories: cleanupSummary,
             topRecommendations: recommendationSummary,
             storageSummary: storageSummaryLines(),
+            storageFocusSummary: storageFocusSummaryLines(),
+            networkSummary: networkSummaryLines(),
             trashedApps: trashedAppSummary,
             menuBarAlerts: alertSummary
+        )
+    }
+
+    private func exportContext(storageNodeOverride: StorageNode? = nil) -> MaintenanceExportContext {
+        MaintenanceExportContext(
+            maintenanceReport: maintenanceReport(),
+            focusedStorageNode: storageNodeOverride ?? focusedStorageExportNode(),
+            storageFocusConfiguration: storageFocusConfiguration,
+            networkReport: networkReport,
+            metrics: metrics
         )
     }
 
@@ -1444,6 +2455,51 @@ final class AppModel: ObservableObject {
 
         lines.append("Current inspection mode: \(storageInspectionMode.title)")
         return lines
+    }
+
+    private func storageFocusSummaryLines() -> [String] {
+        var lines = [
+            "Focus mode: \(storageFocusMode.title)",
+            "Minimum size: \(storageMinimumSize.title)",
+            "Collapse common clutter: \(storageCollapseCommonClutter ? "On" : "Off")"
+        ]
+
+        if let node = focusedStorageExportNode() {
+            let result = storageFocusResult(for: node)
+            lines.append("Focused node: \(node.name)")
+            lines.append("Visible nodes after filters: \(result.visibleChildCount)")
+        }
+
+        return lines
+    }
+
+    private func networkSummaryLines() -> [String] {
+        var lines = [
+            "Live throughput: ↓ \(ByteFormatting.formatRate(metrics.networkDownloadRate)) ↑ \(ByteFormatting.formatRate(metrics.networkUploadRate))"
+        ]
+
+        if let networkReport {
+            lines.append("Processes with sockets: \(networkReport.processes.count)")
+            lines.append("Active connections: \(networkReport.activeConnectionCount)")
+            lines.append("Remote hosts: \(networkReport.remoteHosts.count)")
+            lines.append("Listening sockets included: \(networkReport.includesListeningSockets ? "Yes" : "No")")
+        } else {
+            lines.append("Network inspector has not been loaded yet.")
+        }
+
+        return lines
+    }
+
+    private func focusedStorageExportNode() -> StorageNode? {
+        if let storageVolumeCurrentNode {
+            return storageFocusResult(for: storageVolumeCurrentNode).node
+        }
+
+        guard let explorerRoot = storageReport?.explorerRoot else {
+            return nil
+        }
+
+        return storageFocusResult(for: explorerRoot).node
     }
 
     private func priorityRank(_ priority: RecommendedActionPriority) -> Int {

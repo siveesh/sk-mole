@@ -58,7 +58,7 @@ struct CleanupView: View {
     private var header: some View {
         SectionCard(
             title: "Cleanup preview",
-            subtitle: "Nothing is deleted blindly. Each candidate is sized first, filtered through path guards, and moved to Trash instead of being hard-deleted.",
+            subtitle: "Nothing is deleted blindly. Each candidate is sized first, filtered through path guards, and then permanently removed when you confirm cleanup.",
             symbol: "sparkles.rectangle.stack"
         ) {
             HStack(spacing: 14) {
@@ -148,14 +148,14 @@ private struct CleanupCategoryCard: View {
                         .foregroundStyle(.secondary)
                     Button("Clear Selection", action: onClearSelection)
                         .buttonStyle(.bordered)
-                        .disabled(selectedCount == 0 || isBusy)
+                        .disabled(selectedCount == 0)
                     Button(action: onTrashSelected) {
-                        Label("Move Selected to Trash", systemImage: "trash")
+                        Label("Delete Selected", systemImage: "trash")
                     }
                         .buttonStyle(.borderedProminent)
                         .disabled(selectedCount == 0 || isBusy)
                     Button(action: onTrashCategory) {
-                        Label("Move Category to Trash", systemImage: "trash")
+                        Label("Delete Category", systemImage: "trash")
                     }
                         .buttonStyle(.bordered)
                         .disabled(category.candidates.isEmpty || isBusy)
@@ -213,7 +213,7 @@ private struct CleanupCandidateRow: View {
                 accessibilityLabel: "Select \(candidate.displayName)",
                 action: onToggleSelection
             )
-            .disabled(candidate.safetyLevel == .protected || isBusy)
+            .disabled(candidate.safetyLevel == .protected)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(candidate.displayName)
@@ -229,7 +229,7 @@ private struct CleanupCandidateRow: View {
 
             ActionIconButton(
                 symbol: "trash",
-                label: "Move \(candidate.displayName) to Trash",
+                label: "Delete \(candidate.displayName)",
                 style: .prominent(AppPalette.rose),
                 action: onTrash
             )
@@ -238,7 +238,8 @@ private struct CleanupCandidateRow: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(AppPalette.secondaryCard.opacity(0.7))
+                .fill(isSelected ? AppPalette.accent.opacity(0.16) : AppPalette.secondaryCard.opacity(0.7))
         )
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }

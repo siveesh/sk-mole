@@ -40,8 +40,8 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
 
         button.image = NSImage(systemSymbolName: "aqi.medium", accessibilityDescription: "SK Mole Companion")
-        button.imagePosition = .imageLeading
-        button.title = " CPU 0%"
+        button.imagePosition = .imageOnly
+        button.title = ""
         button.font = .systemFont(ofSize: 12, weight: .semibold)
     }
 
@@ -58,6 +58,7 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Open SK Mole", action: #selector(openMainApp), keyEquivalent: "o"))
+        menu.addItem(NSMenuItem(title: "Open Network Inspector", action: #selector(openNetworkInspector), keyEquivalent: "n"))
         menu.addItem(NSMenuItem(title: "Open Smart Care", action: #selector(openSmartCare), keyEquivalent: "s"))
         menu.addItem(NSMenuItem(title: "Open Privacy & Security", action: #selector(openPrivacySecurity), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -103,13 +104,13 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         if activeAlerts.isEmpty {
             let metrics = settings.visibleStatusMetrics.isEmpty ? [.cpu] : settings.visibleStatusMetrics
             button.image = NSImage(systemSymbolName: statusSymbol(for: metrics.first ?? .cpu), accessibilityDescription: "SK Mole Companion")
-            button.title = statusTitle(style: settings.statusStyle, metrics: metrics, snapshot: snapshot)
+            button.title = ""
             button.toolTip = metrics
                 .map { combinedMetricText(for: $0, snapshot: snapshot) }
                 .joined(separator: " • ")
         } else {
             button.image = NSImage(systemSymbolName: "exclamationmark.circle.fill", accessibilityDescription: "SK Mole alerts")
-            button.title = " \(activeAlerts.count)"
+            button.title = ""
             button.toolTip = activeAlerts.map(\.title).joined(separator: "\n")
         }
     }
@@ -138,44 +139,6 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func statusTitle(style: MenuBarStatusStyle, metrics: [MenuBarStatusMetric], snapshot: MenuBarSnapshot) -> String {
-        let visibleMetrics = Array(metrics.prefix(style == .compact ? 1 : style == .combined ? 3 : 4))
-        let body: String
-
-        switch style {
-        case .compact:
-            body = compactMetricText(for: visibleMetrics.first ?? .cpu, snapshot: snapshot)
-        case .combined:
-            body = visibleMetrics.map { combinedMetricText(for: $0, snapshot: snapshot) }.joined(separator: " • ")
-        case .sensorStrip:
-            body = visibleMetrics.map { stripMetricText(for: $0, snapshot: snapshot) }.joined(separator: " ")
-        }
-
-        return body.isEmpty ? " CPU 0%" : " \(body)"
-    }
-
-    private func compactMetricText(for metric: MenuBarStatusMetric, snapshot: MenuBarSnapshot) -> String {
-        switch metric {
-        case .cpu:
-            return "CPU \(Int((snapshot.cpuUsage * 100).rounded()))%"
-        case .memory:
-            return "M\(Int((snapshot.memoryUsage * 100).rounded()))%"
-        case .network:
-            return "↓\(MenuBarHelperFormatting.formatRate(snapshot.downloadRate))"
-        case .thermal:
-            return "T\(thermalShortTitle(for: snapshot.thermalStateLevel))"
-        case .pressure:
-            return "P\(pressureShortTitle(for: snapshot.memoryPressureLevel))"
-        case .battery:
-            if let batteryLevel = snapshot.batteryLevel {
-                return "B\(Int((batteryLevel * 100).rounded()))%"
-            }
-            return "AC"
-        case .diskFree:
-            return "D\(Int((snapshot.diskFreeRatio * 100).rounded()))%"
-        }
-    }
-
     private func combinedMetricText(for metric: MenuBarStatusMetric, snapshot: MenuBarSnapshot) -> String {
         switch metric {
         case .cpu:
@@ -195,28 +158,6 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
             return "BAT AC"
         case .diskFree:
             return "FREE \(Int((snapshot.diskFreeRatio * 100).rounded()))%"
-        }
-    }
-
-    private func stripMetricText(for metric: MenuBarStatusMetric, snapshot: MenuBarSnapshot) -> String {
-        switch metric {
-        case .cpu:
-            return "CPU \(Int((snapshot.cpuUsage * 100).rounded()))%"
-        case .memory:
-            return "MEM \(Int((snapshot.memoryUsage * 100).rounded()))%"
-        case .network:
-            return "NET ↓\(MenuBarHelperFormatting.formatRate(snapshot.downloadRate))"
-        case .thermal:
-            return "THERM \(thermalTitle(for: snapshot.thermalStateLevel))"
-        case .pressure:
-            return "PRESS \(pressureTitle(for: snapshot.memoryPressureLevel))"
-        case .battery:
-            if let batteryLevel = snapshot.batteryLevel {
-                return "BAT \(Int((batteryLevel * 100).rounded()))%"
-            }
-            return "BAT AC"
-        case .diskFree:
-            return "FREE \(MenuBarHelperFormatting.formatBytes(snapshot.diskFreeBytes))"
         }
     }
 
@@ -250,17 +191,6 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func pressureShortTitle(for level: Int) -> String {
-        switch level {
-        case 2:
-            return "High"
-        case 1:
-            return "Elev"
-        default:
-            return "OK"
-        }
-    }
-
     private func thermalTitle(for level: Int) -> String {
         switch level {
         case 3:
@@ -274,19 +204,6 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func thermalShortTitle(for level: Int) -> String {
-        switch level {
-        case 3:
-            return "Crit"
-        case 2:
-            return "Ser"
-        case 1:
-            return "Fair"
-        default:
-            return "Nom"
-        }
-    }
-
     @objc
     private func openMainApp() {
         guard let mainAppURL = mainApplicationURL() else { return }
@@ -297,6 +214,16 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         configuration.addsToRecentItems = false
 
         NSWorkspace.shared.openApplication(at: mainAppURL, configuration: configuration)
+    }
+
+    @objc
+    private func openNetworkInspector() {
+        if let deepLink = URL(string: "\(MenuBarHelperConstants.mainAppURLScheme)://section/network"),
+           NSWorkspace.shared.open(deepLink) {
+            return
+        }
+
+        openMainApp()
     }
 
     @objc

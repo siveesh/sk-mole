@@ -6,15 +6,19 @@ struct DashboardView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+            let contentWidth = max(proxy.size.width - 48, 320)
+
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 20) {
                     hero
-                    metricsGrid(for: proxy.size.width)
-                    monitoringBoards(for: proxy.size.width)
-                    statusSections(for: proxy.size.width)
+                    metricsGrid(for: contentWidth)
+                    monitoringBoards(for: contentWidth)
+                    statusSections(for: contentWidth)
                     topProcessesSection
                 }
                 .padding(24)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -50,6 +54,11 @@ struct DashboardView: View {
 
                 Button("Open Smart Care") {
                     model.open(section: .smartCare)
+                }
+                .buttonStyle(.bordered)
+
+                Button("Open Network") {
+                    model.open(section: .network)
                 }
                 .buttonStyle(.bordered)
 
@@ -183,7 +192,7 @@ struct DashboardView: View {
 
                 SectionCard(
                     title: "Network History",
-                    subtitle: "Recent inbound and outbound throughput without waiting for a separate trace.",
+                    subtitle: "Recent inbound and outbound throughput, with a one-click path into the on-demand connection inspector.",
                     symbol: "arrow.left.and.right.circle"
                 ) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -196,6 +205,11 @@ struct DashboardView: View {
                             statHeader("Up", ByteFormatting.formatRate(model.metrics.networkUploadRate), AppPalette.accent)
                             HistorySparkline(points: model.uploadHistory, tint: AppPalette.accent)
                         }
+
+                        Button("Open Network Inspector") {
+                            model.open(section: .network)
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
@@ -262,6 +276,25 @@ struct DashboardView: View {
 
     private func statusSections(for width: CGFloat) -> some View {
         LazyVGrid(columns: boardColumns(for: width), alignment: .leading, spacing: 18) {
+            SectionCard(
+                title: "Network inspector",
+                subtitle: "Refreshable process, connection, and remote-host views that stay dormant until you ask for them.",
+                symbol: "network"
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(model.networkReport.map { "\($0.processes.count)" } ?? "0")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                    Text(model.networkReport == nil ? "No network snapshot yet." : "\(model.networkReport?.activeConnectionCount ?? 0) active connections across \(model.networkReport?.remoteHosts.count ?? 0) remote hosts.")
+                        .foregroundStyle(.secondary)
+
+                    Button("Open Network Inspector") {
+                        model.open(section: .network)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)
+
             SectionCard(
                 title: "Smart Care",
                 subtitle: "Guided recommendations pulled from cleanup, storage, permissions, and current system pressure.",
@@ -351,6 +384,7 @@ struct DashboardView: View {
             symbol: "list.bullet.rectangle.portrait"
         ) {
             TopProcessList(processes: model.metrics.topProcesses)
+                .allowsHitTesting(false)
         }
     }
 

@@ -74,6 +74,12 @@ struct RootView: View {
         switch model.selection {
         case .dashboard:
             DashboardView(model: model)
+        case .homebrew:
+            HomebrewView(model: model)
+        case .network:
+            NetworkInspectorView(model: model)
+        case .quarantine:
+            QuarantineView(model: model)
         case .smartCare:
             SmartCareView(model: model)
         case .cleanup:

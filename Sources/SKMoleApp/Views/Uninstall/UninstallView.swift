@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct UninstallView: View {
     @ObservedObject var model: AppModel
     @State private var isDropTargeted = false
+    @State private var selectedAppIDs: Set<String> = []
 
     var body: some View {
         HStack(spacing: 22) {
@@ -12,6 +13,9 @@ struct UninstallView: View {
             detailPane
         }
         .padding(28)
+        .onChange(of: (model.applications + model.trashedApplications).map(\.id)) { _, ids in
+            selectedAppIDs = selectedAppIDs.intersection(Set(ids))
+        }
     }
 
     private var appsPane: some View {
@@ -30,6 +34,31 @@ struct UninstallView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(model.uninstallBusy)
+                }
+
+                HStack {
+                    Text("\(selectedApps.count) selected")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button("Clear Selection") {
+                        selectedAppIDs.removeAll()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(selectedAppIDs.isEmpty)
+
+                    Button {
+                        Task {
+                            await model.removeApplications(selectedApps)
+                            selectedAppIDs.removeAll()
+                        }
+                    } label: {
+                        Label("Remove Selected", systemImage: "trash")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedApps.isEmpty || model.uninstallBusy)
                 }
 
                 if let applicationDiscoveryProgress = model.applicationDiscoveryProgress {
@@ -52,7 +81,7 @@ struct UninstallView: View {
                     )
                     .frame(minHeight: 320)
                 } else {
-                    List(selection: selectionBinding) {
+                    List {
                         if !model.filteredApplications.isEmpty {
                             Section("Installed") {
                                 ForEach(model.filteredApplications) { app in
@@ -83,7 +112,9 @@ struct UninstallView: View {
             symbol: "magnifyingglass.circle"
         ) {
             Group {
-                if let app = model.selectedApp {
+                if selectedApps.count > 1 {
+                    bulkSelectionSummary
+                } else if let app = model.selectedApp {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack(alignment: .top) {
                             HStack(alignment: .top, spacing: 14) {
@@ -289,22 +320,6 @@ struct UninstallView: View {
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted, perform: handleDrop(providers:))
     }
 
-    private var selectionBinding: Binding<String?> {
-        Binding<String?>(
-            get: { model.selectedApp?.id },
-            set: { newValue in
-                let allApps = model.filteredApplications + model.filteredTrashedApplications
-                guard let newValue, let app = allApps.first(where: { $0.id == newValue }) else {
-                    model.selectedApp = nil
-                    model.uninstallPreview = nil
-                    return
-                }
-
-                Task { await model.selectApp(app) }
-            }
-        )
-    }
-
     private func metricBlock(_ value: String, _ subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(value)
@@ -316,17 +331,33 @@ struct UninstallView: View {
 
     private func appRow(_ app: InstalledApp) -> some View {
         HStack(spacing: 12) {
-            AppIconThumbnail(url: app.url, size: 42, cornerRadius: 11)
+            SelectionCircleButton(
+                isSelected: selectedAppIDs.contains(app.id),
+                accessibilityLabel: "Select \(app.name)",
+                action: {
+                    toggleSelection(for: app)
+                }
+            )
+            .disabled(app.isProtected)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(app.name)
-                    .font(.headline)
-                Text(ByteFormatting.format(app.sizeBytes))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Button {
+                Task { await model.selectApp(app) }
+            } label: {
+                HStack(spacing: 12) {
+                    AppIconThumbnail(url: app.url, size: 42, cornerRadius: 11)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(app.name)
+                            .font(.headline)
+                        Text(ByteFormatting.format(app.sizeBytes))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
             }
-
-            Spacer()
+            .buttonStyle(.plain)
 
             if app.isInTrash {
                 Pill(title: "Trash", tint: AppPalette.amber)
@@ -341,6 +372,99 @@ struct UninstallView: View {
             }
         }
         .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(rowHighlight(for: app))
+        )
+    }
+
+    private var selectedApps: [InstalledApp] {
+        let allApps = model.applications + model.trashedApplications
+        return allApps.filter { selectedAppIDs.contains($0.id) }
+    }
+
+    private var bulkSelectionSummary: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(selectedApps.count)")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                    Text("apps selected for bulk removal")
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(ByteFormatting.format(selectedApps.reduce(into: UInt64(0)) { $0 += $1.sizeBytes }))
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                    Text("combined app bundle size")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("Bulk removal still uses the same preview-safe uninstall flow under the hood for each selected app. Protected apps cannot be selected here, and apps already in Trash will only have leftovers removed.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(selectedApps.prefix(10)) { app in
+                    HStack {
+                        AppIconThumbnail(url: app.url, size: 30, cornerRadius: 8)
+                        Text(app.name)
+                            .font(.headline)
+                        Spacer()
+                        Text(ByteFormatting.format(app.sizeBytes))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    Task {
+                        await model.removeApplications(selectedApps)
+                        selectedAppIDs.removeAll()
+                    }
+                } label: {
+                    Label("Move Selected Apps to Trash", systemImage: "trash")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedApps.isEmpty || model.uninstallBusy)
+
+                Button("Clear Selection") {
+                    selectedAppIDs.removeAll()
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.uninstallBusy)
+
+                if model.uninstallBusy {
+                    ProgressView()
+                }
+            }
+        }
+    }
+
+    private func toggleSelection(for app: InstalledApp) {
+        if selectedAppIDs.contains(app.id) {
+            selectedAppIDs.remove(app.id)
+        } else {
+            selectedAppIDs.insert(app.id)
+        }
+    }
+
+    private func rowHighlight(for app: InstalledApp) -> Color {
+        if selectedAppIDs.contains(app.id) {
+            return AppPalette.accent.opacity(0.16)
+        }
+
+        if model.selectedApp?.id == app.id {
+            return AppPalette.sky.opacity(0.12)
+        }
+
+        return .clear
     }
 
     private func primaryMetricSubtitle(for preview: UninstallPreview) -> String {

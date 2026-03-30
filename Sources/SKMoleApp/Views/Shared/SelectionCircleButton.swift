@@ -13,14 +13,15 @@ struct SelectionCircleButton: View {
 
                 Circle()
                     .fill(AppPalette.accent)
-                    .padding(5)
+                    .padding(6)
                     .opacity(isSelected ? 1 : 0)
             }
-            .frame(width: 22, height: 22)
+            .frame(width: 30, height: 30)
+            .contentShape(Rectangle())
             .animation(.snappy(duration: 0.16), value: isSelected)
         }
-        .buttonStyle(.plain)
-        .contentShape(Circle())
+        .buttonStyle(.borderless)
+        .padding(2)
         .help(isSelected ? "Deselect" : "Select")
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(isSelected ? "Selected" : "Not selected")

@@ -264,6 +264,16 @@ struct SettingsView: View {
                 }
 
                 SectionCard(
+                    title: "Export Plugins",
+                    subtitle: "Exporters are loaded only when you use them, so SK Mole can stay richer without paying the startup cost every time.",
+                    symbol: "square.and.arrow.up.on.square"
+                ) {
+                    ExportPluginGridView(plugins: model.availableExportPlugins) { pluginID in
+                        Task { await model.export(using: pluginID) }
+                    }
+                }
+
+                SectionCard(
                     title: "Monitoring Notes",
                     subtitle: "Keep the menu bar useful without turning SK Mole into another heavy background tool.",
                     symbol: "waveform.path.ecg.rectangle"

@@ -5,6 +5,8 @@ enum GuardPurpose {
     case uninstall
     case analyze
     case storage
+    case developerTooling
+    case quarantine
 }
 
 actor SystemGuard {
@@ -43,6 +45,20 @@ actor SystemGuard {
         home.appendingPathComponent(".Trash")
     ]
 
+    private lazy var developerToolRoots: [URL] = [
+        URL(fileURLWithPath: "/usr/local/lib"),
+        URL(fileURLWithPath: "/opt/homebrew/lib"),
+        home.appendingPathComponent("lib")
+    ]
+
+    private lazy var quarantineRoots: [URL] = [
+        URL(fileURLWithPath: "/Applications"),
+        home.appendingPathComponent("Applications"),
+        home.appendingPathComponent("Downloads"),
+        home.appendingPathComponent("Desktop"),
+        home.appendingPathComponent("Documents")
+    ]
+
     private let protectedRoots: [String] = [
         "/System",
         "/bin",
@@ -58,7 +74,9 @@ actor SystemGuard {
         let normalized = URLPathSafety.standardized(url)
         let path = normalized.path
 
-        if purpose != .analyze, protectedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+        if purpose != .analyze,
+           purpose != .developerTooling,
+           protectedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
             return false
         }
 
@@ -89,6 +107,18 @@ actor SystemGuard {
             }
 
             return !components.dropLast().contains(where: { $0.lowercased().hasSuffix(".app") })
+        case .developerTooling:
+            guard normalized.pathExtension.lowercased() == "dylib" else {
+                return false
+            }
+
+            return developerToolRoots.contains(where: { URLPathSafety.isDescendant(normalized, of: $0) })
+        case .quarantine:
+            guard normalized.pathExtension.lowercased() == "app" else {
+                return false
+            }
+
+            return quarantineRoots.contains(where: { URLPathSafety.isDescendant(normalized, of: $0) })
         }
     }
 
@@ -114,5 +144,21 @@ actor SystemGuard {
             var trashedURL: NSURL?
             try FileManager.default.trashItem(at: url, resultingItemURL: &trashedURL)
         }
+    }
+
+    func removePermanently(_ url: URL, purpose: GuardPurpose) throws {
+        guard canOperate(on: url, purpose: purpose) else {
+            throw NSError(
+                domain: "SKMole.SystemGuard",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Blocked permanent removal for protected or unsupported path: \(url.path)"]
+            )
+        }
+
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+
+        try FileManager.default.removeItem(at: url)
     }
 }

@@ -8,6 +8,7 @@ struct SmartCareView: View {
             VStack(alignment: .leading, spacing: 22) {
                 header
                 quickActions
+                exportCenter
 
                 if model.recommendedActions.isEmpty {
                     SectionCard(
@@ -64,6 +65,18 @@ struct SmartCareView: View {
                     Task { await model.exportDryRunReport() }
                 }
                 .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var exportCenter: some View {
+        SectionCard(
+            title: "Export Center",
+            subtitle: "Glances-style exporter plugins keep richer outputs available without front-loading the work at startup.",
+            symbol: "square.and.arrow.up.on.square"
+        ) {
+            ExportPluginGridView(plugins: model.availableExportPlugins) { pluginID in
+                Task { await model.export(using: pluginID) }
             }
         }
     }

@@ -5,7 +5,7 @@
     <key>Label</key>
     <string>com.siveesh.skmole.privilegedhelper</string>
     <key>BundleProgram</key>
-    <string>Contents/Library/LaunchServices/com.siveesh.skmole.privilegedhelper</string>
+    <string>Contents/Library/HelperTools/com.siveesh.skmole.privilegedhelper</string>
     <key>MachServices</key>
     <dict>
         <key>com.siveesh.skmole.privilegedhelper</key>

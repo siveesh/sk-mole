@@ -121,7 +121,7 @@ struct OptimizeView: View {
                 }
 
                 HStack(spacing: 12) {
-                    Button("Register Helper") {
+                    Button(registerButtonTitle) {
                         Task { await model.registerPrivilegedHelper() }
                     }
                     .buttonStyle(.borderedProminent)
@@ -131,6 +131,7 @@ struct OptimizeView: View {
                         Task { await model.refreshPrivilegedHelperState() }
                     }
                     .buttonStyle(.bordered)
+                    .disabled(model.privilegedHelperBusy)
 
                     Button("Unregister Helper") {
                         Task { await model.unregisterPrivilegedHelper() }
@@ -144,6 +145,14 @@ struct OptimizeView: View {
                 }
             }
         }
+    }
+
+    private var registerButtonTitle: String {
+        if model.privilegedHelperState.isEnabled {
+            return model.privilegedHelperReachability == "Unavailable" ? "Reinstall Helper" : "Re-check Helper"
+        }
+
+        return "Register Helper"
     }
 
     private func adminTaskCard(_ task: PrivilegedMaintenanceTask) -> some View {

@@ -8,7 +8,7 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 LIBRARY_DIR="$CONTENTS_DIR/Library"
-LAUNCH_SERVICES_DIR="$LIBRARY_DIR/LaunchServices"
+HELPER_TOOLS_DIR="$LIBRARY_DIR/HelperTools"
 LAUNCH_DAEMONS_DIR="$LIBRARY_DIR/LaunchDaemons"
 LOGIN_ITEMS_DIR="$LIBRARY_DIR/LoginItems"
 ICON_PATH="$ROOT_DIR/Resources/AppIcon.icns"
@@ -38,13 +38,13 @@ MENU_BAR_HELPER_MACOS_DIR="$MENU_BAR_HELPER_CONTENTS_DIR/MacOS"
 MENU_BAR_HELPER_RESOURCES_DIR="$MENU_BAR_HELPER_CONTENTS_DIR/Resources"
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$LAUNCH_SERVICES_DIR" "$LAUNCH_DAEMONS_DIR" "$LOGIN_ITEMS_DIR" "$MENU_BAR_HELPER_MACOS_DIR" "$MENU_BAR_HELPER_RESOURCES_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$HELPER_TOOLS_DIR" "$LAUNCH_DAEMONS_DIR" "$LOGIN_ITEMS_DIR" "$MENU_BAR_HELPER_MACOS_DIR" "$MENU_BAR_HELPER_RESOURCES_DIR"
 
 cp "$BINARY_PATH" "$MACOS_DIR/SK Mole"
 chmod +x "$MACOS_DIR/SK Mole"
 cp "$INFO_TEMPLATE" "$CONTENTS_DIR/Info.plist"
-cp "$HELPER_BINARY_PATH" "$LAUNCH_SERVICES_DIR/com.siveesh.skmole.privilegedhelper"
-chmod +x "$LAUNCH_SERVICES_DIR/com.siveesh.skmole.privilegedhelper"
+cp "$HELPER_BINARY_PATH" "$HELPER_TOOLS_DIR/com.siveesh.skmole.privilegedhelper"
+chmod +x "$HELPER_TOOLS_DIR/com.siveesh.skmole.privilegedhelper"
 cp "$HELPER_PLIST_TEMPLATE" "$LAUNCH_DAEMONS_DIR/com.siveesh.skmole.privilegedhelper.plist"
 cp "$MENU_BAR_HELPER_BINARY_PATH" "$MENU_BAR_HELPER_MACOS_DIR/SK Mole Companion"
 chmod +x "$MENU_BAR_HELPER_MACOS_DIR/SK Mole Companion"
@@ -56,9 +56,9 @@ if [[ -f "$ICON_PATH" ]]; then
 fi
 
 if command -v codesign >/dev/null 2>&1; then
-    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$LAUNCH_SERVICES_DIR/com.siveesh.skmole.privilegedhelper"
-    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$MENU_BAR_HELPER_APP_DIR"
-    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$APP_DIR"
+    codesign --force --sign "$SIGN_IDENTITY" --identifier "com.siveesh.skmole.privilegedhelper" --timestamp=none "$HELPER_TOOLS_DIR/com.siveesh.skmole.privilegedhelper"
+    codesign --force --sign "$SIGN_IDENTITY" --identifier "com.siveesh.skmole.menubar" --timestamp=none "$MENU_BAR_HELPER_APP_DIR"
+    codesign --force --sign "$SIGN_IDENTITY" --identifier "com.siveesh.skmole" --timestamp=none "$APP_DIR"
 fi
 
 echo "Built app bundle at:"

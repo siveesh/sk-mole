@@ -127,6 +127,7 @@ struct StorageView: View {
 
             StorageExplorerSection(
                 currentNode: report.explorerRoot.descendant(for: explorerPath),
+                focusResult: model.storageFocusResult(for: report.explorerRoot.descendant(for: explorerPath)),
                 breadcrumb: report.explorerRoot.breadcrumb(for: explorerPath),
                 onReveal: model.reveal,
                 onOpenNode: { node in
@@ -137,6 +138,9 @@ struct StorageView: View {
                 },
                 onUseUninstaller: { url in
                     Task { await model.previewDroppedApplication(at: url) }
+                },
+                onExport: {
+                    Task { await model.exportFocusedStorageTree(for: report.explorerRoot.descendant(for: explorerPath)) }
                 }
             )
 
@@ -267,13 +271,16 @@ struct StorageView: View {
                         if selectedVolume.requiresManualScan {
                             manualScanRequiredCard(for: selectedVolume)
                         } else if let currentNode = model.storageVolumeCurrentNode {
+                            let focusResult = model.storageFocusResult(for: currentNode)
                             StorageExplorerBreadcrumbs(
                                 nodes: model.storageVolumeBreadcrumb,
                                 onSelectNode: model.selectStorageBreadcrumb
                             )
 
+                            storageFocusSection(for: currentNode, focusResult: focusResult)
+
                             StorageExplorerSummary(
-                                currentNode: currentNode,
+                                currentNode: focusResult.node,
                                 onReveal: model.reveal
                             )
 
@@ -282,7 +289,7 @@ struct StorageView: View {
                             }
 
                             StorageSpaceMap(
-                                currentNode: currentNode,
+                                currentNode: focusResult.node,
                                 onOpen: { node in
                                     Task { await model.drillIntoStorageNode(node) }
                                 },
@@ -293,13 +300,16 @@ struct StorageView: View {
                             )
                         }
                     } else if let currentNode = model.storageVolumeCurrentNode {
+                        let focusResult = model.storageFocusResult(for: currentNode)
                         StorageExplorerBreadcrumbs(
                             nodes: model.storageVolumeBreadcrumb,
                             onSelectNode: model.selectStorageBreadcrumb
                         )
 
+                        storageFocusSection(for: currentNode, focusResult: focusResult)
+
                         StorageExplorerSummary(
-                            currentNode: currentNode,
+                            currentNode: focusResult.node,
                             onReveal: model.reveal
                         )
 
@@ -308,7 +318,7 @@ struct StorageView: View {
                         }
 
                         StorageSpaceMap(
-                            currentNode: currentNode,
+                            currentNode: focusResult.node,
                             onOpen: { node in
                                 Task { await model.drillIntoStorageNode(node) }
                             },
@@ -367,7 +377,7 @@ struct StorageView: View {
                             selectedLargeFileIDs.removeAll()
                         }
                         .buttonStyle(.bordered)
-                        .disabled(selectedLargeFileIDs.isEmpty || model.storageBusy)
+                        .disabled(selectedLargeFileIDs.isEmpty)
 
                         Button {
                             Task {
@@ -475,6 +485,72 @@ struct StorageView: View {
                 .fill(AppPalette.secondaryCard.opacity(0.68))
         )
     }
+
+    private func storageFocusSection(for rawNode: StorageNode, focusResult: StorageFocusResult) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center) {
+                Label("Focus & Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    .font(.headline)
+
+                Spacer()
+
+                Button("Export Focused Tree") {
+                    Task { await model.exportFocusedStorageTree(for: rawNode) }
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Picker(
+                "Focus mode",
+                selection: Binding(
+                    get: { model.storageFocusMode },
+                    set: { model.storageFocusMode = $0 }
+                )
+            ) {
+                ForEach(StorageFocusMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            HStack(spacing: 16) {
+                Picker(
+                    "Minimum size",
+                    selection: Binding(
+                        get: { model.storageMinimumSize },
+                        set: { model.storageMinimumSize = $0 }
+                    )
+                ) {
+                    ForEach(StorageMinimumSizeFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+
+                Toggle(
+                    "Collapse common clutter",
+                    isOn: Binding(
+                        get: { model.storageCollapseCommonClutter },
+                        set: { model.storageCollapseCommonClutter = $0 }
+                    )
+                )
+            }
+
+            Text(focusResult.summaryLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if focusResult.mode.isSummaryMode {
+                Text("File Types is a summary lens. Switch back to Balanced or Folders when you want to drill deeper into actual paths.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(AppPalette.secondaryCard.opacity(0.72))
+        )
+    }
 }
 
 private struct StorageInsightGrid: View {
@@ -538,31 +614,48 @@ private struct StorageInsightCard: View {
 
 private struct StorageExplorerSection: View {
     let currentNode: StorageNode
+    let focusResult: StorageFocusResult
     let breadcrumb: [StorageNode]
     let onReveal: (URL) -> Void
     let onOpenNode: (StorageNode) -> Void
     let onSelectBreadcrumb: (StorageNode) -> Void
     let onUseUninstaller: (URL) -> Void
+    let onExport: () -> Void
 
     var body: some View {
         SectionCard(
             title: "Space map explorer",
-            subtitle: "Follow the largest contributors with clear cards and ranked bars, then drill into the next level when something looks heavy.",
+            subtitle: "Follow the largest contributors with Dust-style focus modes, collapse rules, and exportable filtered trees.",
             symbol: "square.grid.3x3.square"
         ) {
             VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Focus & Filters", systemImage: "line.3.horizontal.decrease.circle")
+                            .font(.headline)
+                        Text(focusResult.summaryLine)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("Export Focused Tree", action: onExport)
+                        .buttonStyle(.bordered)
+                }
+
                 StorageExplorerBreadcrumbs(
                     nodes: breadcrumb,
                     onSelectNode: onSelectBreadcrumb
                 )
 
                 StorageExplorerSummary(
-                    currentNode: currentNode,
+                    currentNode: focusResult.node,
                     onReveal: onReveal
                 )
 
                 StorageSpaceMap(
-                    currentNode: currentNode,
+                    currentNode: focusResult.node,
                     onOpen: onOpenNode,
                     onReveal: onReveal,
                     onUseUninstaller: onUseUninstaller
@@ -800,7 +893,6 @@ private struct StorageLargeFileRow: View {
                     accessibilityLabel: "Select \(file.displayName)",
                     action: onToggleSelection
                 )
-                .disabled(isBusy)
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -836,7 +928,8 @@ private struct StorageLargeFileRow: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(AppPalette.secondaryCard.opacity(0.7))
+                .fill(isSelected ? AppPalette.accent.opacity(0.16) : AppPalette.secondaryCard.opacity(0.7))
         )
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }

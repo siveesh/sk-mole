@@ -34,6 +34,8 @@ struct MaintenanceReport: Codable, Identifiable, Hashable {
     let cleanupCategories: [String]
     let topRecommendations: [String]
     let storageSummary: [String]
+    let storageFocusSummary: [String]
+    let networkSummary: [String]
     let trashedApps: [String]
     let menuBarAlerts: [String]
 
@@ -45,6 +47,8 @@ struct MaintenanceReport: Codable, Identifiable, Hashable {
         case cleanupCategories
         case topRecommendations
         case storageSummary
+        case storageFocusSummary
+        case networkSummary
         case trashedApps
         case menuBarAlerts
     }

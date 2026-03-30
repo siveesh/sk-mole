@@ -40,6 +40,18 @@ struct MoleCommands: Commands {
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
 
+            Button("Open Homebrew") {
+                open(.homebrew)
+            }
+
+            Button("Open Network Inspector") {
+                open(.network)
+            }
+
+            Button("Open Quarantine Review") {
+                open(.quarantine)
+            }
+
             Button("Open Hidden Storage Mode") {
                 model.setStorageInspectionMode(.hidden)
                 open(.storage)

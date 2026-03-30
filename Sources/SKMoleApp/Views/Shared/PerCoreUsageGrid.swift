@@ -35,5 +35,6 @@ struct PerCoreUsageGrid: View {
                 )
             }
         }
+        .allowsHitTesting(false)
     }
 }

@@ -271,7 +271,8 @@ actor AppInventoryService {
             ("Contents/Library/LoginItems", "person.crop.circle.badge.plus", "Bundled login item removed together with the main app bundle."),
             ("Contents/PlugIns", "puzzlepiece.extension", "Bundled extension or plugin contained inside the app bundle."),
             ("Contents/XPCServices", "bolt.horizontal.circle", "Bundled XPC service contained inside the app bundle."),
-            ("Contents/Library/LaunchServices", "lock.shield", "Bundled helper executable contained inside the app bundle.")
+            ("Contents/Library/HelperTools", "lock.shield", "Bundled helper executable contained inside the app bundle."),
+            ("Contents/Library/LaunchServices", "lock.shield", "Legacy bundled helper executable contained inside the app bundle.")
         ]
 
         var items: [AssociatedAppItem] = []
