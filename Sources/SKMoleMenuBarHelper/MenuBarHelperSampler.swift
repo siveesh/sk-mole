@@ -282,23 +282,12 @@ final class MenuBarHelperSampler {
         swapUsed: UInt64,
         compressed: UInt64
     ) -> Int {
-        guard total > 0 else {
-            return 0
-        }
-
-        let availableRatio = Double(available) / Double(total)
-        let compressedRatio = Double(compressed) / Double(total)
-        let gigabyte = Double(1_024 * 1_024 * 1_024)
-
-        if Double(swapUsed) >= 2 * gigabyte || availableRatio < 0.08 {
-            return 2
-        }
-
-        if swapUsed > 0 || availableRatio < 0.18 || compressedRatio > 0.10 {
-            return 1
-        }
-
-        return 0
+        SharedMemoryPressureLevel.classify(
+            available: available,
+            total: total,
+            swapUsed: swapUsed,
+            compressed: compressed
+        ).rawValue
     }
 
     private static func readSwapUsage() -> UInt64 {

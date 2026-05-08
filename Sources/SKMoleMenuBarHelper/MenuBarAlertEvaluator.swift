@@ -72,11 +72,7 @@ final class MenuBarAlertEvaluator {
         case .diskFreeRatio:
             return "Startup disk free space is down to \(Int((snapshot.diskFreeRatio * 100).rounded()))%, below the \(rule.formattedThreshold) rule."
         case .memoryPressure:
-            let title = switch snapshot.memoryPressureLevel {
-            case 2: "High"
-            case 1: "Elevated"
-            default: "Stable"
-            }
+            let title = SharedMemoryPressureLevel(rawValue: snapshot.memoryPressureLevel)?.title ?? "Stable"
             return "Memory pressure is \(title), which meets the \(rule.formattedThreshold) rule."
         case .thermalState:
             let title = switch snapshot.thermalStateLevel {

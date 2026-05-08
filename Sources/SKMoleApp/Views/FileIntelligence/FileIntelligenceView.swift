@@ -285,13 +285,39 @@ struct FileIntelligenceView: View {
                 : "Folder targets were scanned directly, so rerun with recursion enabled if you want file-by-file results.",
             symbol: "list.bullet.rectangle"
         ) {
-            if model.filteredMagikaItems.isEmpty {
+            if report.items.isEmpty {
                 ContentUnavailableView(
-                    "No Matching Results",
+                    "No Results Returned",
                     systemImage: "doc.text.magnifyingglass",
-                    description: Text("Try a different search or turn off the interesting-only filter.")
+                    description: Text(report.recursive ? "Magika completed, but it did not return any file results for the current selection." : "Magika only scanned the folder itself. Turn recursion on and rescan to inspect the files inside.")
                 )
                 .frame(minHeight: 260)
+            } else if model.filteredMagikaItems.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    ContentUnavailableView(
+                        "Results Hidden by Filters",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        description: Text("SK Mole found \(report.items.count) result\(report.items.count == 1 ? "" : "s"), but the current search or interesting-only filter is hiding them.")
+                    )
+                    .frame(minHeight: 220)
+
+                    HStack(spacing: 12) {
+                        Button("Show All Results") {
+                            model.magikaSearchQuery = ""
+                            model.magikaShowInterestingOnly = false
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        if !report.recursive, report.targets.contains(where: { $0.kind == .directory }) {
+                            Button("Enable Recursion and Rescan") {
+                                model.magikaRecursiveDirectories = true
+                                Task { await model.scanSelectedMagikaTargets() }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(model.magikaBusy)
+                        }
+                    }
+                }
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(model.filteredMagikaItems.prefix(250)) { item in

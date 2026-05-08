@@ -208,18 +208,37 @@ struct SettingsView: View {
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(.secondary)
 
-                                    Slider(
-                                        value: Binding(
-                                            get: { model.menuBarCompanionSettings.rules[index].threshold },
-                                            set: { newValue in
-                                                model.saveMenuBarCompanionSettings { settings in
-                                                    settings.rules[index].threshold = newValue
+                                    if rule.metric.discreteThresholdOptions.isEmpty {
+                                        Slider(
+                                            value: Binding(
+                                                get: { model.menuBarCompanionSettings.rules[index].threshold },
+                                                set: { newValue in
+                                                    model.saveMenuBarCompanionSettings { settings in
+                                                        settings.rules[index].threshold = newValue
+                                                    }
                                                 }
+                                            ),
+                                            in: rule.metric.thresholdRange,
+                                            step: rule.metric.thresholdStep
+                                        )
+                                    } else {
+                                        Picker(
+                                            "Threshold",
+                                            selection: Binding(
+                                                get: { model.menuBarCompanionSettings.rules[index].threshold },
+                                                set: { newValue in
+                                                    model.saveMenuBarCompanionSettings { settings in
+                                                        settings.rules[index].threshold = newValue
+                                                    }
+                                                }
+                                            )
+                                        ) {
+                                            ForEach(rule.metric.discreteThresholdOptions, id: \.value) { option in
+                                                Text(option.title).tag(option.value)
                                             }
-                                        ),
-                                        in: rule.metric.thresholdRange,
-                                        step: rule.metric.thresholdStep
-                                    )
+                                        }
+                                        .pickerStyle(.segmented)
+                                    }
 
                                     Text(model.menuBarCompanionSettings.rules[index].formattedThreshold)
                                         .font(.caption.weight(.semibold))

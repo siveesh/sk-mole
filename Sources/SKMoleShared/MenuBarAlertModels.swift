@@ -62,6 +62,24 @@ public enum MenuBarAlertMetric: String, CaseIterable, Codable, Hashable, Identif
             return 1...3
         }
     }
+
+    public var discreteThresholdOptions: [(value: Double, title: String)] {
+        switch self {
+        case .memoryPressure:
+            return [
+                (1, "Elevated"),
+                (2, "High")
+            ]
+        case .thermalState:
+            return [
+                (1, "Fair"),
+                (2, "Serious"),
+                (3, "Critical")
+            ]
+        case .cpuUsage, .memoryUsage, .diskFreeRatio, .batteryLevel:
+            return []
+        }
+    }
 }
 
 public enum MenuBarStatusStyle: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
@@ -197,7 +215,7 @@ public struct MenuBarAlertRule: Codable, Hashable, Identifiable, Sendable {
             id: "memory-pressure",
             metric: .memoryPressure,
             comparison: .above,
-            threshold: 1,
+            threshold: 2,
             durationSeconds: 45,
             cooldownMinutes: 20
         ),
@@ -269,13 +287,17 @@ public final class MenuBarCompanionSettingsStore {
     private func normalized(_ settings: MenuBarCompanionSettings) -> MenuBarCompanionSettings {
         var revised = settings
         revised.rules = settings.rules.map { rule in
-            guard rule.id == "memory-usage", rule.metric == .memoryUsage, rule.threshold < 0.75 else {
-                return rule
+            var revisedRule = rule
+
+            if rule.id == "memory-usage", rule.metric == .memoryUsage, rule.threshold < 0.75 {
+                revisedRule.threshold = 0.75
             }
 
-            var upgraded = rule
-            upgraded.threshold = 0.75
-            return upgraded
+            if rule.id == "memory-pressure", rule.metric == .memoryPressure, rule.threshold < 2 {
+                revisedRule.threshold = 2
+            }
+
+            return revisedRule
         }
 
         return revised

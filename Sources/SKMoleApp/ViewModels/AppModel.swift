@@ -1195,6 +1195,8 @@ final class AppModel: ObservableObject {
 
             return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
+        magikaSearchQuery = ""
+        magikaShowInterestingOnly = false
 
         selection = .fileIntelligence
         if !hasLoadedMagika {
@@ -2511,8 +2513,31 @@ final class AppModel: ObservableObject {
 
         let service = homebrewService
         let task = Task { [requestID] in
+            var detectedStatus: HomebrewStatus?
             do {
-                return try await service.loadInventory()
+                let status = try await service.detectStatus()
+                detectedStatus = status
+
+                await MainActor.run {
+                    guard self.homebrewRequestID == requestID else { return }
+                    self.homebrewInventory = HomebrewInventory(
+                        status: status,
+                        installedPackages: self.homebrewInventory?.installedPackages ?? [],
+                        services: self.homebrewInventory?.services ?? [],
+                        lastUpdated: .now
+                    )
+                }
+
+                guard status.isInstalled else {
+                    return HomebrewInventory(
+                        status: status,
+                        installedPackages: [],
+                        services: [],
+                        lastUpdated: .now
+                    )
+                }
+
+                return try await service.loadInventory(using: status)
             } catch {
                 await MainActor.run {
                     guard self.homebrewRequestID == requestID else { return }
@@ -2520,7 +2545,7 @@ final class AppModel: ObservableObject {
                 }
 
                 return HomebrewInventory(
-                    status: HomebrewStatus(executablePath: nil, version: nil, prefix: nil),
+                    status: detectedStatus ?? HomebrewStatus(executablePath: nil, version: nil, prefix: nil),
                     installedPackages: [],
                     services: [],
                     lastUpdated: .now
@@ -2877,6 +2902,7 @@ final class AppModel: ObservableObject {
         menuBarCompanionError = nil
 
         if launchIfEnabled {
+            menuBarCompanion.relaunchIfStale()
             menuBarCompanion.launchIfNeeded()
 
             do {

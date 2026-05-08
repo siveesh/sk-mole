@@ -1,4 +1,5 @@
 import Foundation
+import SKMoleShared
 
 enum MemoryPressureState: String, Hashable {
     case nominal
@@ -18,6 +19,17 @@ enum MemoryPressureState: String, Hashable {
         case .nominal: "checkmark.circle"
         case .elevated: "exclamationmark.circle"
         case .high: "exclamationmark.triangle"
+        }
+    }
+
+    init(sharedLevel: SharedMemoryPressureLevel) {
+        switch sharedLevel {
+        case .nominal:
+            self = .nominal
+        case .elevated:
+            self = .elevated
+        case .high:
+            self = .high
         }
     }
 }

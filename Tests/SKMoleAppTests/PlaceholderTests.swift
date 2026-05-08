@@ -96,6 +96,17 @@ import SKMoleShared
     #expect(HomebrewService.sanitizeJSONObjectEnvelope(from: raw) == #"{"formulae":[],"casks":[]}"#)
 }
 
+@Test func homebrewInventoryPreservesProvidedStatusWhenExecutableIsMissing() async throws {
+    let service = HomebrewService()
+    let status = HomebrewStatus(executablePath: nil, version: nil, prefix: nil)
+
+    let inventory = try await service.loadInventory(using: status)
+
+    #expect(inventory.status == status)
+    #expect(inventory.installedPackages.isEmpty)
+    #expect(inventory.services.isEmpty)
+}
+
 @Test func gitHubCLICommandsRemainStable() async throws {
     #expect(GitHubCLIStatus.installCommand == "brew install gh")
     #expect(GitHubCLIStatus.authCommand == "gh auth login --web --git-protocol https")
@@ -152,4 +163,38 @@ import SKMoleShared
     let memoryRule = try #require(MenuBarAlertRule.defaults.first(where: { $0.id == "memory-usage" }))
     #expect(memoryRule.metric == .memoryUsage)
     #expect(memoryRule.threshold == 0.75)
+}
+
+@Test func menuBarMemoryPressureAlertDefaultsToHigh() async throws {
+    let pressureRule = try #require(MenuBarAlertRule.defaults.first(where: { $0.id == "memory-pressure" }))
+    #expect(pressureRule.metric == .memoryPressure)
+    #expect(pressureRule.threshold == 2)
+}
+
+@Test func discreteMenuBarThresholdOptionsRemainStable() async throws {
+    #expect(MenuBarAlertMetric.memoryPressure.discreteThresholdOptions.map(\.title) == ["Elevated", "High"])
+    #expect(MenuBarAlertMetric.thermalState.discreteThresholdOptions.map(\.title) == ["Fair", "Serious", "Critical"])
+}
+
+@Test func sharedMemoryPressureClassificationRemainsConservative() async throws {
+    let sixteenGB = UInt64(16 * 1_024 * 1_024 * 1_024)
+    let gigabyte = UInt64(1_024 * 1_024 * 1_024)
+
+    #expect(
+        SharedMemoryPressureLevel.classify(
+            available: UInt64(Double(sixteenGB) * 0.14),
+            total: sixteenGB,
+            swapUsed: 0,
+            compressed: gigabyte / 2
+        ) == .elevated
+    )
+
+    #expect(
+        SharedMemoryPressureLevel.classify(
+            available: UInt64(Double(sixteenGB) * 0.04),
+            total: sixteenGB,
+            swapUsed: 0,
+            compressed: gigabyte / 2
+        ) == .high
+    )
 }

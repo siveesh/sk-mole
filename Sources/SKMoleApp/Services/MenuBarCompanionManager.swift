@@ -70,6 +70,31 @@ final class MenuBarCompanionManager {
         NSWorkspace.shared.openApplication(at: helperBundleURL, configuration: configuration)
     }
 
+    func relaunchIfStale() {
+        guard let helperBundleURL = helperBundleURL(),
+              let helperBundle = Bundle(url: helperBundleURL),
+              let executableURL = helperBundle.executableURL,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: executableURL.path),
+              let executableModifiedDate = attributes[.modificationDate] as? Date else {
+            return
+        }
+
+        let runningHelpers = NSRunningApplication.runningApplications(withBundleIdentifier: MenuBarHelperConstants.bundleIdentifier)
+        guard !runningHelpers.isEmpty else { return }
+
+        let needsRelaunch = runningHelpers.contains { runningApp in
+            guard let launchDate = runningApp.launchDate else {
+                return false
+            }
+
+            return launchDate < executableModifiedDate.addingTimeInterval(-1)
+        }
+
+        guard needsRelaunch else { return }
+        terminateRunningHelper()
+        launchIfNeeded()
+    }
+
     func terminateRunningHelper() {
         NSRunningApplication.runningApplications(withBundleIdentifier: MenuBarHelperConstants.bundleIdentifier).forEach {
             $0.terminate()

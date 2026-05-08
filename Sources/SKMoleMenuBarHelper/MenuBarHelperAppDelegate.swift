@@ -181,14 +181,7 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func pressureTitle(for level: Int) -> String {
-        switch level {
-        case 2:
-            return "High"
-        case 1:
-            return "Elevated"
-        default:
-            return "Stable"
-        }
+        SharedMemoryPressureLevel(rawValue: level)?.title ?? "Stable"
     }
 
     private func thermalTitle(for level: Int) -> String {

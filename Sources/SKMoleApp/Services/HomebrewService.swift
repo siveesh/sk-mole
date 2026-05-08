@@ -94,6 +94,10 @@ actor HomebrewService {
 
     func loadInventory() async throws -> HomebrewInventory {
         let status = try await detectStatus()
+        return try await loadInventory(using: status)
+    }
+
+    func loadInventory(using status: HomebrewStatus) async throws -> HomebrewInventory {
         guard let brewPath = status.executablePath else {
             return HomebrewInventory(status: status, installedPackages: [], services: [], lastUpdated: .now)
         }
@@ -282,21 +286,29 @@ actor HomebrewService {
     }
 
     private func detectBrewFromLoginShell() async throws -> String? {
-        let result = try await runProcess(
-            executable: "/bin/zsh",
-            arguments: ["-lc", "command -v brew 2>/dev/null || true"]
-        )
+        let probes: [(executable: String, arguments: [String])] = [
+            ("/bin/zsh", ["-ilc", "command -v brew 2>/dev/null || true"]),
+            ("/bin/zsh", ["-lc", "command -v brew 2>/dev/null || true"]),
+            ("/bin/bash", ["-lc", "command -v brew 2>/dev/null || true"])
+        ]
 
-        guard result.terminationStatus == 0 else {
-            return nil
+        for probe in probes {
+            let result = try await runProcess(
+                executable: probe.executable,
+                arguments: probe.arguments
+            )
+
+            guard result.terminationStatus == 0 else {
+                continue
+            }
+
+            let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !path.isEmpty, fileManager.isExecutableFile(atPath: path) {
+                return path
+            }
         }
 
-        let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty, fileManager.isExecutableFile(atPath: path) else {
-            return nil
-        }
-
-        return path
+        return nil
     }
 
     private func runProcess(executable: String, arguments: [String]) async throws -> ProcessResult {
@@ -304,6 +316,7 @@ actor HomebrewService {
             DispatchQueue.global(qos: .utility).async {
                 let process = Process()
                 let pipe = Pipe()
+                let buffer = ProcessOutputBuffer()
 
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = arguments
@@ -312,13 +325,26 @@ actor HomebrewService {
                 process.standardError = pipe
 
                 do {
+                    pipe.fileHandleForReading.readabilityHandler = { handle in
+                        let chunk = handle.availableData
+                        guard !chunk.isEmpty else { return }
+                        buffer.append(chunk)
+                    }
+
+                    process.terminationHandler = { process in
+                        pipe.fileHandleForReading.readabilityHandler = nil
+                        let remainder = pipe.fileHandleForReading.readDataToEndOfFile()
+                        buffer.append(remainder)
+                        let finalData = buffer.snapshot()
+
+                        let output = String(decoding: finalData, as: UTF8.self)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        continuation.resume(returning: ProcessResult(output: output, terminationStatus: process.terminationStatus))
+                    }
+
                     try process.run()
-                    process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(decoding: data, as: UTF8.self)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    continuation.resume(returning: ProcessResult(output: output, terminationStatus: process.terminationStatus))
                 } catch {
+                    pipe.fileHandleForReading.readabilityHandler = nil
                     continuation.resume(throwing: error)
                 }
             }
@@ -523,6 +549,25 @@ actor HomebrewService {
 private struct ProcessResult {
     let output: String
     let terminationStatus: Int32
+}
+
+private final class ProcessOutputBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func snapshot() -> Data {
+        lock.lock()
+        let copy = data
+        lock.unlock()
+        return copy
+    }
 }
 
 private struct BrewInfoPayload: Decodable {

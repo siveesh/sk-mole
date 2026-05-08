@@ -267,23 +267,14 @@ final class SystemMetricsSampler {
         swapUsed: UInt64,
         compressed: UInt64
     ) -> MemoryPressureState {
-        guard total > 0 else {
-            return .nominal
-        }
-
-        let availableRatio = Double(available) / Double(total)
-        let compressedRatio = Double(compressed) / Double(total)
-        let gigabyte = Double(1_024 * 1_024 * 1_024)
-
-        if Double(swapUsed) >= 2 * gigabyte || availableRatio < 0.08 {
-            return .high
-        }
-
-        if swapUsed > 0 || availableRatio < 0.18 || compressedRatio > 0.10 {
-            return .elevated
-        }
-
-        return .nominal
+        MemoryPressureState(
+            sharedLevel: SharedMemoryPressureLevel.classify(
+                available: available,
+                total: total,
+                swapUsed: swapUsed,
+                compressed: compressed
+            )
+        )
     }
 
     private static func readSwapUsage() -> (used: UInt64, total: UInt64) {

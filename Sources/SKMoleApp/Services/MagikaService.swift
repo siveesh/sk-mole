@@ -133,6 +133,7 @@ actor MagikaService {
             DispatchQueue.global(qos: .utility).async {
                 let process = Process()
                 let pipe = Pipe()
+                let buffer = ProcessOutputBuffer()
 
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = arguments
@@ -141,13 +142,26 @@ actor MagikaService {
                 process.standardError = pipe
 
                 do {
+                    pipe.fileHandleForReading.readabilityHandler = { handle in
+                        let chunk = handle.availableData
+                        guard !chunk.isEmpty else { return }
+                        buffer.append(chunk)
+                    }
+
+                    process.terminationHandler = { process in
+                        pipe.fileHandleForReading.readabilityHandler = nil
+                        let remainder = pipe.fileHandleForReading.readDataToEndOfFile()
+                        buffer.append(remainder)
+                        let finalData = buffer.snapshot()
+
+                        let output = String(decoding: finalData, as: UTF8.self)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        continuation.resume(returning: ProcessResult(output: output, terminationStatus: process.terminationStatus))
+                    }
+
                     try process.run()
-                    process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(decoding: data, as: UTF8.self)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    continuation.resume(returning: ProcessResult(output: output, terminationStatus: process.terminationStatus))
                 } catch {
+                    pipe.fileHandleForReading.readabilityHandler = nil
                     continuation.resume(throwing: error)
                 }
             }
@@ -191,6 +205,25 @@ actor MagikaService {
 private struct ProcessResult {
     let output: String
     let terminationStatus: Int32
+}
+
+private final class ProcessOutputBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func snapshot() -> Data {
+        lock.lock()
+        let copy = data
+        lock.unlock()
+        return copy
+    }
 }
 
 private struct MagikaCLIRecord: Decodable {
