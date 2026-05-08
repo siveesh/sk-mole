@@ -172,7 +172,7 @@ private struct FinishStep: View {
 
             SectionCard(
                 title: "Launch Behavior",
-                subtitle: "Set the first window target and keep the menu bar companion handy for quick reopen and quit flows.",
+                subtitle: "Set the first window target and optionally keep the menu bar companion around for quick reopen and quit flows.",
                 symbol: "sparkles.tv"
             ) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -189,7 +189,7 @@ private struct FinishStep: View {
                     }
 
                     Toggle(
-                        "Keep the menu bar companion enabled",
+                        "Enable the menu bar companion",
                         isOn: Binding(
                             get: { model.menuBarCompanionEnabled },
                             set: { model.menuBarCompanionEnabled = $0 }

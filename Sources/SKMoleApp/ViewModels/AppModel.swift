@@ -17,6 +17,7 @@ final class AppModel: ObservableObject {
         static let storageFocusMode = "skmole.storageFocusMode"
         static let storageMinimumSize = "skmole.storageMinimumSize"
         static let storageCollapseClutter = "skmole.storageCollapseClutter"
+        static let magikaRecursiveDirectories = "skmole.magikaRecursiveDirectories"
         static let networkResolveHostnames = "skmole.networkResolveHostnames"
         static let networkIncludeListeningSockets = "skmole.networkIncludeListeningSockets"
         static let processSortMode = "skmole.processSortMode"
@@ -54,7 +55,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    @Published var menuBarCompanionEnabled = true {
+    @Published var menuBarCompanionEnabled = false {
         didSet {
             UserDefaults.standard.set(menuBarCompanionEnabled, forKey: PreferenceKey.menuBarCompanionEnabled)
             syncMenuBarCompanion(launchIfEnabled: menuBarCompanionEnabled)
@@ -195,6 +196,19 @@ final class AppModel: ObservableObject {
     @Published var gitHubCLIBusy = false
     @Published var gitHubCLIError: String?
 
+    @Published var magikaStatus = MagikaStatus(executablePath: nil, version: nil)
+    @Published var magikaBusy = false
+    @Published var magikaError: String?
+    @Published var magikaTargets: [MagikaScanTarget] = []
+    @Published var magikaReport: MagikaScanReport?
+    @Published var magikaSearchQuery = ""
+    @Published var magikaShowInterestingOnly = false
+    @Published var magikaRecursiveDirectories = true {
+        didSet {
+            UserDefaults.standard.set(magikaRecursiveDirectories, forKey: PreferenceKey.magikaRecursiveDirectories)
+        }
+    }
+
     @Published var orphanedFiles: [OrphanedFileCandidate] = []
     @Published var orphanedFilesBusy = false
     @Published var orphanedFilesError: String?
@@ -228,6 +242,7 @@ final class AppModel: ObservableObject {
     private lazy var quarantineAudit = QuarantineAuditService(guardService: guardService, sizer: sizer)
     private lazy var homebrewService = HomebrewService()
     private lazy var gitHubCLIService = GitHubCLIService()
+    private let magikaService = MagikaService()
     private let startupItemsService = StartupItemsService()
     private let optimizer = OptimizationService()
     private let privilegedHelper = PrivilegedHelperManager()
@@ -247,6 +262,7 @@ final class AppModel: ObservableObject {
     private var hasLoadedQuarantine = false
     private var hasLoadedHomebrew = false
     private var hasLoadedGitHubCLI = false
+    private var hasLoadedMagika = false
     private var hasLoadedPrivilegedHelper = false
     private var hasLoadedStartupItems = false
     private var hasPreparedInitialSelection = false
@@ -261,6 +277,7 @@ final class AppModel: ObservableObject {
     private var homebrewRequestID = UUID()
     private var homebrewSearchRequestID = UUID()
     private var gitHubCLIRequestID = UUID()
+    private var magikaRequestID = UUID()
     private var startupItemsRequestID = UUID()
 
     private var cleanupTask: Task<[CleanupCategorySummary], Never>?
@@ -273,6 +290,7 @@ final class AppModel: ObservableObject {
     private var homebrewTask: Task<HomebrewInventory, Never>?
     private var homebrewSearchTask: Task<[HomebrewPackageSearchResult], Never>?
     private var gitHubCLITask: Task<GitHubCLIInventory, Never>?
+    private var magikaTask: Task<MagikaScanReport?, Never>?
     private var startupItemsTask: Task<[StartupItem], Never>?
     private var homebrewSelectedReference: HomebrewPackageReference?
     private var scheduledMaintenanceTask: Task<Void, Never>?
@@ -393,6 +411,27 @@ final class AppModel: ObservableObject {
             $0.name.localizedCaseInsensitiveContains(query)
                 || ($0.bundleIdentifier?.localizedCaseInsensitiveContains(query) ?? false)
                 || $0.url.path.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var filteredMagikaItems: [MagikaScanItem] {
+        let query = magikaSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (magikaReport?.items ?? []).filter { item in
+            if magikaShowInterestingOnly, !item.isInteresting {
+                return false
+            }
+
+            guard !query.isEmpty else {
+                return true
+            }
+
+            return item.displayName.localizedCaseInsensitiveContains(query)
+                || item.path.path.localizedCaseInsensitiveContains(query)
+                || item.group.localizedCaseInsensitiveContains(query)
+                || (item.trustedType?.label.localizedCaseInsensitiveContains(query) ?? false)
+                || (item.modelType?.label.localizedCaseInsensitiveContains(query) ?? false)
+                || item.mimeType.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -533,6 +572,7 @@ final class AppModel: ObservableObject {
             MaintenanceQuickAction(id: "refresh-all", title: "Refresh All", subtitle: "Reload cleanup, uninstall, and storage data", icon: "arrow.clockwise"),
             MaintenanceQuickAction(id: "smart-care-report", title: "Export Dry Run", subtitle: "Save a maintenance report to disk", icon: "square.and.arrow.up"),
             MaintenanceQuickAction(id: "orphan-review", title: "Orphan Review", subtitle: "Inspect leftover app support files", icon: "questionmark.folder"),
+            MaintenanceQuickAction(id: "file-intelligence", title: "File Intelligence", subtitle: "Classify files by content with Magika when available", icon: "doc.text.viewfinder"),
             MaintenanceQuickAction(id: "network-inspector", title: "Network Inspector", subtitle: "Open the on-demand process and connection view", icon: "network"),
             MaintenanceQuickAction(id: "process-inspector", title: "Process Inspector", subtitle: "Review active processes and terminate safe user-owned work", icon: "list.bullet.rectangle.portrait"),
             MaintenanceQuickAction(id: "hidden-storage", title: "Hidden Space", subtitle: "Switch Storage into hidden-space mode", icon: "eye.slash"),
@@ -550,7 +590,7 @@ final class AppModel: ObservableObject {
         self.startupPreference = startupPreference
         self.selection = startupPreference.resolve(lastSelection: lastSelection)
         self.autoRefreshOnOpen = defaults.object(forKey: PreferenceKey.autoRefreshOnOpen) as? Bool ?? false
-        self.menuBarCompanionEnabled = defaults.object(forKey: PreferenceKey.menuBarCompanionEnabled) as? Bool ?? true
+        self.menuBarCompanionEnabled = defaults.object(forKey: PreferenceKey.menuBarCompanionEnabled) as? Bool ?? false
         self.showFullDiskAccessReminders = defaults.object(forKey: PreferenceKey.showFullDiskAccessReminders) as? Bool ?? true
         self.hasCompletedOnboarding = defaults.object(forKey: PreferenceKey.hasCompletedOnboarding) as? Bool ?? false
         self.showOnboarding = !self.hasCompletedOnboarding
@@ -559,6 +599,7 @@ final class AppModel: ObservableObject {
         self.storageFocusMode = defaults.string(forKey: PreferenceKey.storageFocusMode).flatMap(StorageFocusMode.init(rawValue:)) ?? .balanced
         self.storageMinimumSize = defaults.string(forKey: PreferenceKey.storageMinimumSize).flatMap(StorageMinimumSizeFilter.init(rawValue:)) ?? .all
         self.storageCollapseCommonClutter = defaults.object(forKey: PreferenceKey.storageCollapseClutter) as? Bool ?? true
+        self.magikaRecursiveDirectories = defaults.object(forKey: PreferenceKey.magikaRecursiveDirectories) as? Bool ?? true
         self.networkResolveHostnames = defaults.object(forKey: PreferenceKey.networkResolveHostnames) as? Bool ?? false
         self.networkIncludeListeningSockets = defaults.object(forKey: PreferenceKey.networkIncludeListeningSockets) as? Bool ?? true
         self.processSortMode = defaults.string(forKey: PreferenceKey.processSortMode).flatMap(ProcessSortMode.init(rawValue:)) ?? .cpu
@@ -1033,6 +1074,9 @@ final class AppModel: ObservableObject {
                 await loadApplications(force: true)
             }
             await loadOrphanedFiles(force: true)
+        case "file-intelligence":
+            open(section: .fileIntelligence)
+            await loadMagika(force: false)
         case "network-inspector":
             open(section: .network)
             await loadNetwork(force: true)
@@ -1110,6 +1154,120 @@ final class AppModel: ObservableObject {
 
     func refreshHomebrew() async {
         await loadHomebrew(force: true)
+    }
+
+    func refreshFileIntelligence() async {
+        await loadMagika(force: true)
+    }
+
+    func pickMagikaTargets() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.resolvesAliases = true
+        panel.prompt = "Add"
+        panel.message = "Select files or folders to classify with Magika."
+
+        guard panel.runModal() == .OK else {
+            return
+        }
+
+        Task { await addMagikaTargets(panel.urls) }
+    }
+
+    func addMagikaTargets(_ urls: [URL]) async {
+        let validTargets = urls.compactMap(Self.magikaTarget)
+        guard !validTargets.isEmpty else {
+            magikaError = "Add regular files or folders to inspect with Magika."
+            return
+        }
+
+        var merged = Dictionary(uniqueKeysWithValues: magikaTargets.map { ($0.id, $0) })
+        for target in validTargets {
+            merged[target.id] = target
+        }
+
+        magikaTargets = merged.values.sorted {
+            if $0.kind != $1.kind {
+                return $0.kind.rawValue < $1.kind.rawValue
+            }
+
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+
+        selection = .fileIntelligence
+        if !hasLoadedMagika {
+            await loadMagika(force: false)
+        }
+
+        if magikaStatus.isInstalled {
+            await scanSelectedMagikaTargets()
+        }
+    }
+
+    func removeMagikaTarget(_ target: MagikaScanTarget) {
+        magikaTargets.removeAll { $0.id == target.id }
+
+        if magikaTargets.isEmpty {
+            magikaReport = nil
+            magikaError = nil
+        }
+    }
+
+    func clearMagikaTargets() {
+        magikaTargets.removeAll()
+        magikaReport = nil
+        magikaError = nil
+        magikaSearchQuery = ""
+    }
+
+    func scanSelectedMagikaTargets() async {
+        guard !magikaTargets.isEmpty else {
+            magikaError = "Add at least one file or folder before running Magika."
+            return
+        }
+
+        await loadMagika(force: true)
+    }
+
+    func installMagika() async {
+        guard homebrewStatus.isInstalled else {
+            selection = .homebrew
+            homebrewError = "Install Homebrew first, then SK Mole can install Magika with brew."
+            return
+        }
+
+        let log = await executeHomebrewCommand(
+            arguments: ["install", "magika"],
+            actionTitle: "Install Magika",
+            actionID: "install:magika"
+        )
+
+        if log.succeeded {
+            await loadMagika(force: true)
+        }
+    }
+
+    func openMagikaHomepage() {
+        NSWorkspace.shared.open(MagikaStatus.homepageURL)
+    }
+
+    func openMagikaRepository() {
+        NSWorkspace.shared.open(MagikaStatus.repositoryURL)
+    }
+
+    func openMagikaInHomebrew() async {
+        let magikaResult = HomebrewPackageSearchResult.featured.first(where: { $0.reference == MagikaStatus.homebrewReference })
+            ?? HomebrewPackageSearchResult(
+                reference: MagikaStatus.homebrewReference,
+                displayName: "Magika",
+                description: "AI-powered file content type detection",
+                source: "Recommended formula",
+                bundleIdentifier: nil
+            )
+
+        await selectHomebrewSearchResult(magikaResult)
     }
 
     func searchHomebrewPackages() async {
@@ -1906,6 +2064,8 @@ final class AppModel: ObservableObject {
             if force || !hasLoadedStorage {
                 await loadStorage(force: true)
             }
+        case .fileIntelligence:
+            await loadMagika(force: force || !hasLoadedMagika)
         case .homebrew:
             let shouldRefreshHomebrew = force || !hasLoadedHomebrew
             let shouldRefreshGitHubCLI = force || !hasLoadedGitHubCLI
@@ -2442,6 +2602,68 @@ final class AppModel: ObservableObject {
         hasLoadedGitHubCLI = true
     }
 
+    private func loadMagika(force: Bool) async {
+        if !force {
+            guard !hasLoadedMagika else {
+                return
+            }
+
+            guard magikaTask == nil else {
+                return
+            }
+        }
+
+        magikaTask?.cancel()
+        let requestID = UUID()
+        magikaRequestID = requestID
+
+        magikaBusy = true
+        magikaError = nil
+        SKMoleLog.scans.info("Refreshing Magika status and file-intelligence results")
+
+        let service = magikaService
+        let targets = magikaTargets
+        let recursive = magikaRecursiveDirectories
+        let task = Task<MagikaScanReport?, Never> { [requestID] in
+            do {
+                let status = try await service.detectStatus()
+
+                await MainActor.run {
+                    guard self.magikaRequestID == requestID else { return }
+                    self.magikaStatus = status
+                }
+
+                guard status.isInstalled, !targets.isEmpty else {
+                    return nil
+                }
+
+                return try await service.scan(targets: targets, recursive: recursive, status: status)
+            } catch {
+                await MainActor.run {
+                    guard self.magikaRequestID == requestID else { return }
+                    self.magikaError = error.localizedDescription
+                }
+
+                return nil
+            }
+        }
+        magikaTask = task
+
+        let report = await task.value
+        guard magikaRequestID == requestID else { return }
+
+        if let report {
+            magikaReport = report
+            SKMoleLog.scans.info("Loaded \(report.scannedCount, privacy: .public) Magika results")
+        } else if !magikaStatus.isInstalled {
+            magikaReport = nil
+        }
+
+        magikaBusy = false
+        magikaTask = nil
+        hasLoadedMagika = true
+    }
+
     private func loadStartupItems(force: Bool) async {
         if !force {
             guard !hasLoadedStartupItems else {
@@ -2563,6 +2785,17 @@ final class AppModel: ObservableObject {
         } catch {
             onError(error.localizedDescription)
         }
+    }
+
+    private static func magikaTarget(_ url: URL) -> MagikaScanTarget? {
+        let normalized = URLPathSafety.standardized(url)
+        var isDirectory: ObjCBool = false
+
+        guard FileManager.default.fileExists(atPath: normalized.path, isDirectory: &isDirectory) else {
+            return nil
+        }
+
+        return MagikaScanTarget(url: normalized, kind: isDirectory.boolValue ? .directory : .file)
     }
 
     private func installationArguments(for reference: HomebrewPackageReference) -> [String] {

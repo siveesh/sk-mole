@@ -4,6 +4,7 @@ enum StartupPreference: String, CaseIterable, Identifiable {
     case rememberLast
     case dashboard
     case homebrew
+    case fileIntelligence
     case processes
     case quarantine
     case orphans
@@ -20,6 +21,7 @@ enum StartupPreference: String, CaseIterable, Identifiable {
         case .rememberLast: "Remember last section"
         case .dashboard: "Always open Dashboard"
         case .homebrew: "Always open Homebrew"
+        case .fileIntelligence: "Always open File Intelligence"
         case .processes: "Always open Processes"
         case .quarantine: "Always open Quarantine"
         case .orphans: "Always open Orphans"
@@ -39,6 +41,8 @@ enum StartupPreference: String, CaseIterable, Identifiable {
             return .dashboard
         case .homebrew:
             return .homebrew
+        case .fileIntelligence:
+            return .fileIntelligence
         case .processes:
             return .processes
         case .quarantine:

@@ -44,6 +44,10 @@ struct MoleCommands: Commands {
                 open(.homebrew)
             }
 
+            Button("Open File Intelligence") {
+                open(.fileIntelligence)
+            }
+
             Button("Open Network Inspector") {
                 open(.network)
             }

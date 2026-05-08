@@ -13,7 +13,9 @@ DMG_NAME="SK-Mole-${VERSION}.dmg"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
 VOLUME_NAME="SK Mole ${VERSION}"
 
-"$ROOT_DIR/scripts/build-app.sh"
+if [[ ! -d "$APP_PATH" ]]; then
+    "$ROOT_DIR/scripts/build-app.sh"
+fi
 
 if [[ ! -d "$APP_PATH" ]]; then
     echo "Expected app bundle at $APP_PATH but it was not found." >&2

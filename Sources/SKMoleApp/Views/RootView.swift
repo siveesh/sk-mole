@@ -88,6 +88,8 @@ struct RootView: View {
             DashboardView(model: model)
         case .homebrew:
             HomebrewView(model: model)
+        case .fileIntelligence:
+            FileIntelligenceView(model: model)
         case .network:
             NetworkInspectorView(model: model)
         case .processes:

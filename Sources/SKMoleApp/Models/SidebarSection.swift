@@ -3,6 +3,7 @@ import Foundation
 enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     case dashboard
     case homebrew
+    case fileIntelligence
     case network
     case processes
     case quarantine
@@ -19,6 +20,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .dashboard: "Dashboard"
         case .homebrew: "Homebrew"
+        case .fileIntelligence: "File Intelligence"
         case .network: "Network"
         case .processes: "Processes"
         case .quarantine: "Quarantine"
@@ -35,6 +37,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .dashboard: "gauge.with.dots.needle.50percent"
         case .homebrew: "cup.and.saucer.fill"
+        case .fileIntelligence: "doc.text.viewfinder"
         case .network: "network"
         case .processes: "list.bullet.rectangle.portrait"
         case .quarantine: "shield.slash"
@@ -51,6 +54,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .dashboard: "Real-time system health and fast actions"
         case .homebrew: "Manage Homebrew packages, casks, services, and maintenance"
+        case .fileIntelligence: "Use Magika to classify files by content and scan folders recursively"
         case .network: "On-demand process, connection, and remote-host inspection"
         case .processes: "Inspect active processes and safely terminate user-owned work"
         case .quarantine: "Review quarantined apps and clear com.apple.quarantine deliberately"
@@ -67,6 +71,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .dashboard: "1"
         case .homebrew: "2"
+        case .fileIntelligence: "f"
         case .network: "3"
         case .processes: "p"
         case .quarantine: "4"
@@ -85,6 +90,8 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
             self = .dashboard
         case "homebrew", "brew":
             self = .homebrew
+        case "file-intelligence", "file-intel", "magika":
+            self = .fileIntelligence
         case "network":
             self = .network
         case "processes", "process-inspector", "activity":

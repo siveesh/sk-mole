@@ -16,6 +16,7 @@ import SKMoleShared
 @Test func startupPreferenceResolvesExpectedSection() async throws {
     #expect(StartupPreference.dashboard.resolve(lastSelection: .cleanup) == .dashboard)
     #expect(StartupPreference.homebrew.resolve(lastSelection: .cleanup) == .homebrew)
+    #expect(StartupPreference.fileIntelligence.resolve(lastSelection: .cleanup) == .fileIntelligence)
     #expect(StartupPreference.processes.resolve(lastSelection: .cleanup) == .processes)
     #expect(StartupPreference.quarantine.resolve(lastSelection: .cleanup) == .quarantine)
     #expect(StartupPreference.orphans.resolve(lastSelection: .cleanup) == .orphans)
@@ -44,6 +45,7 @@ import SKMoleShared
 @Test func orphanSidebarSlugResolves() async throws {
     #expect(SidebarSection(urlSlug: "orphans") == .orphans)
     #expect(SidebarSection(urlSlug: "leftovers") == .orphans)
+    #expect(SidebarSection(urlSlug: "magika") == .fileIntelligence)
     #expect(SidebarSection(urlSlug: "process-inspector") == .processes)
 }
 
@@ -103,7 +105,17 @@ import SKMoleShared
 @Test func featuredHomebrewCatalogIsExpanded() async throws {
     #expect(HomebrewPackageSearchResult.featured.count >= 30)
     #expect(HomebrewPackageSearchResult.featured.contains(where: { $0.token == "gh" }))
+    #expect(HomebrewPackageSearchResult.featured.contains(where: { $0.token == "magika" }))
     #expect(HomebrewPackageSearchResult.featured.contains(where: { $0.token == "rectangle" && $0.bundleIdentifier == "com.knollsoft.Rectangle" }))
+}
+
+@Test func magikaSanitizerExtractsJSONArrayEnvelope() async throws {
+    let raw = """
+    noisy preface
+    [{"path":"/tmp/demo.txt","result":{"status":"ok","value":{"dl":{"description":"Plain text","extensions":["txt"],"group":"text","is_text":true,"label":"txt","mime_type":"text/plain"},"output":{"description":"Plain text","extensions":["txt"],"group":"text","is_text":true,"label":"txt","mime_type":"text/plain"},"score":0.9}}}]
+    """
+
+    #expect(MagikaService.sanitizeJSONArrayEnvelope(from: raw).hasPrefix("[{"))
 }
 
 @Test func quarantinedApplicationBuildsExpectedXattrCommand() async throws {
@@ -134,4 +146,10 @@ import SKMoleShared
     #expect(snapshot.summary.contains("82%"))
     #expect(snapshot.summary.contains("Charging"))
     #expect(snapshot.summary.contains("Low Power"))
+}
+
+@Test func menuBarMemoryAlertDefaultIsSeventyFivePercent() async throws {
+    let memoryRule = try #require(MenuBarAlertRule.defaults.first(where: { $0.id == "memory-usage" }))
+    #expect(memoryRule.metric == .memoryUsage)
+    #expect(memoryRule.threshold == 0.75)
 }

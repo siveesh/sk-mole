@@ -192,6 +192,13 @@ struct HomebrewPackageSearchResult: Hashable, Identifiable {
             bundleIdentifier: nil
         ),
         HomebrewPackageSearchResult(
+            reference: HomebrewPackageReference(token: "magika", kind: .formula),
+            displayName: "magika",
+            description: "AI-powered file content type detection",
+            source: "Recommended formula",
+            bundleIdentifier: nil
+        ),
+        HomebrewPackageSearchResult(
             reference: HomebrewPackageReference(token: "ripgrep", kind: .formula),
             displayName: "ripgrep",
             description: "Line-oriented search tool that recursively searches directories",

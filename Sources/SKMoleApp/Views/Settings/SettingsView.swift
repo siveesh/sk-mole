@@ -81,7 +81,7 @@ struct SettingsView: View {
 
                 SectionCard(
                     title: "Menu Bar Companion",
-                    subtitle: "Run a separate helper app in the menu bar so you can reopen or quit cleanly even after the main window or main process is gone.",
+                    subtitle: "Optionally run a separate helper app in the menu bar so you can reopen or quit cleanly even after the main window or main process is gone.",
                     symbol: "menubar.rectangle"
                 ) {
                     VStack(alignment: .leading, spacing: 14) {

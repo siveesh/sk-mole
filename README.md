@@ -6,6 +6,7 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 
 - Dashboard with live CPU, GPU activity, memory, disk, and network telemetry, plus history views and a smoother long-scroll layout
 - Homebrew manager for packages, casks, `brew services`, maintenance, doctor follow-up, curated recommendations, and GitHub CLI workflows
+- File Intelligence tab powered by optional Magika CLI integration for content-based type detection, recursive folder scans, confidence-fallback review, and extension-mismatch surfacing
 - Network inspector for processes, remote hosts, connections, and interfaces
 - Process inspector for active process review with safe, user-owned termination only
 - Quarantine review tab for quarantined app bundles with explicit `xattr` actions
@@ -23,6 +24,7 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 - GitHub CLI install/auth flows are surfaced in the Homebrew area, including auth-status refresh, PAT links, and repository listing for the signed-in account
 - Homebrew doctor output can surface actionable unexpected-dylib follow-up directly in the UI
 - Homebrew inventory loading is hardened so noisy or partial `brew` JSON output does not collapse the whole tab into a decode error
+- Magika can be installed from the existing Homebrew workflow, then used inside SK Mole without turning it into a bundled heavyweight ML runtime
 - Process and maintenance actions now emit unified `os.log` entries through clear SK Mole log categories for Console-based debugging
 - Localization groundwork now ships with an initial `en.lproj` bundle scaffold so the app can grow into fuller translation support cleanly
 
@@ -42,6 +44,7 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 - The packaged app in `dist/` is ad-hoc signed in this workspace, so the main UI is testable but privileged-helper registration still requires a real Apple signing identity
 - Quarantine actions use the system `xattr` tool directly from SK Mole and do not require Terminal automation permission
 - Homebrew install/auth flows should now open Terminal normally without requiring Terminal Apple Events authorization
+- File Intelligence remains optional; if Magika is not installed, SK Mole stays fully usable and simply offers install/open guidance instead of shipping its own model runtime
 - Scheduled reports are dry-run exports only; SK Mole does not schedule unattended deletion
 - The DMG includes both `SK Mole.app` and this `README.md` for distribution
 
@@ -83,7 +86,7 @@ To package a distributable `.dmg`:
 ./scripts/build-dmg.sh
 ```
 
-The generated disk image is created in `dist/SK-Mole-1.0.0.dmg` and now includes both `SK Mole.app` and this `README.md`.
+The generated disk image is created in `dist/SK-Mole-<version>.dmg` and now includes both `SK Mole.app` and this `README.md`.
 
 For production helper registration, sign with a real Apple identity:
 

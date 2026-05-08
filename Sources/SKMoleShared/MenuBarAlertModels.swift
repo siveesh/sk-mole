@@ -181,7 +181,7 @@ public struct MenuBarAlertRule: Codable, Hashable, Identifiable, Sendable {
             id: "memory-usage",
             metric: .memoryUsage,
             comparison: .above,
-            threshold: 0.84,
+            threshold: 0.75,
             durationSeconds: 120,
             cooldownMinutes: 20
         ),
@@ -254,11 +254,30 @@ public final class MenuBarCompanionSettingsStore {
             return .default
         }
 
-        return (try? decoder.decode(MenuBarCompanionSettings.self, from: data)) ?? .default
+        guard let decoded = try? decoder.decode(MenuBarCompanionSettings.self, from: data) else {
+            return .default
+        }
+
+        return normalized(decoded)
     }
 
     public func save(_ settings: MenuBarCompanionSettings) throws {
         let data = try encoder.encode(settings)
         try data.write(to: fileURL, options: .atomic)
+    }
+
+    private func normalized(_ settings: MenuBarCompanionSettings) -> MenuBarCompanionSettings {
+        var revised = settings
+        revised.rules = settings.rules.map { rule in
+            guard rule.id == "memory-usage", rule.metric == .memoryUsage, rule.threshold < 0.75 else {
+                return rule
+            }
+
+            var upgraded = rule
+            upgraded.threshold = 0.75
+            return upgraded
+        }
+
+        return revised
     }
 }
