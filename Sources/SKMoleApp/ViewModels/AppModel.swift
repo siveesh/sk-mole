@@ -2067,7 +2067,7 @@ final class AppModel: ObservableObject {
         case .fileIntelligence:
             await loadMagika(force: force || !hasLoadedMagika)
         case .homebrew:
-            let shouldRefreshHomebrew = force || !hasLoadedHomebrew
+            let shouldRefreshHomebrew = force || !hasLoadedHomebrew || !homebrewStatus.isInstalled
             let shouldRefreshGitHubCLI = force || !hasLoadedGitHubCLI
             async let refreshHomebrew: Void = loadHomebrew(force: shouldRefreshHomebrew)
             async let refreshGitHubCLI: Void = loadGitHubCLI(force: shouldRefreshGitHubCLI)

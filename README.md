@@ -42,6 +42,7 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 ## Notes for testers
 
 - The packaged app in `dist/` is ad-hoc signed in this workspace, so the main UI is testable but privileged-helper registration still requires a real Apple signing identity
+- Because this workspace build is unsigned for local distribution, macOS may place `SK Mole.app` in quarantine and show a misleading warning such as `"SK Mole.app" is damaged and can’t be opened. You should move it to the Trash.` That is a Gatekeeper/quarantine issue rather than actual app corruption. For local testing, you can remove the quarantine attribute with `xattr -d com.apple.quarantine "SK Mole.app"`.
 - Quarantine actions use the system `xattr` tool directly from SK Mole and do not require Terminal automation permission
 - Homebrew install/auth flows should now open Terminal normally without requiring Terminal Apple Events authorization
 - File Intelligence remains optional; if Magika is not installed, SK Mole stays fully usable and simply offers install/open guidance instead of shipping its own model runtime

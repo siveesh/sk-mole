@@ -81,6 +81,12 @@ struct HomebrewView: View {
                         }
                         .buttonStyle(.borderedProminent)
 
+                        Button("Refresh Status") {
+                            Task { await model.refreshHomebrew() }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.homebrewBusy)
+
                         Button("Open Install Guide") {
                             model.openHomebrewInstallGuide()
                         }

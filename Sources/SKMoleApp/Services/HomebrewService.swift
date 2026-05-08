@@ -254,7 +254,11 @@ actor HomebrewService {
             "/usr/local/bin/brew"
         ]
 
-        let executablePath = candidates.first(where: { fileManager.isExecutableFile(atPath: $0) })
+        let executablePath = if let knownPath = candidates.first(where: { fileManager.isExecutableFile(atPath: $0) }) {
+            knownPath
+        } else {
+            try await detectBrewFromLoginShell()
+        }
         guard let executablePath else {
             return HomebrewStatus(executablePath: nil, version: nil, prefix: nil)
         }
@@ -275,6 +279,24 @@ actor HomebrewService {
             version: version,
             prefix: prefix.isEmpty ? nil : prefix
         )
+    }
+
+    private func detectBrewFromLoginShell() async throws -> String? {
+        let result = try await runProcess(
+            executable: "/bin/zsh",
+            arguments: ["-lc", "command -v brew 2>/dev/null || true"]
+        )
+
+        guard result.terminationStatus == 0 else {
+            return nil
+        }
+
+        let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty, fileManager.isExecutableFile(atPath: path) else {
+            return nil
+        }
+
+        return path
     }
 
     private func runProcess(executable: String, arguments: [String]) async throws -> ProcessResult {
