@@ -2,6 +2,16 @@
 
 SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppCleaner, DaisyDisk, iStat Menus, and Cork. It is designed around a safety-first workflow: preview before action, protect system-critical paths, isolate admin-only work behind a helper, and keep destructive operations tightly scoped.
 
+## Recent release highlights
+
+### v1.1.2
+
+- Homebrew detection now re-checks installed state more reliably, tolerates noisy shell environments, and avoids collapsing the whole tab back to `not installed` when follow-up inventory calls misbehave
+- Homebrew inventory and Magika folder scans now stream large subprocess output safely, which fixes the long-running inventory hang and improves recursive folder result loading
+- File Intelligence resets stale filters when you add fresh targets and gives a clearer empty state when recursion or filters are hiding results
+- The menu bar companion now shares the same memory-pressure classifier as the dashboard, uses more conservative pressure thresholds, and relaunches a stale helper automatically after app updates
+- Memory Pressure and Thermal alert thresholds now use explicit level pickers in Settings instead of awkward coarse slider behavior
+
 ## Included modules
 
 - Dashboard with live CPU, GPU activity, memory, disk, and network telemetry, plus history views and a smoother long-scroll layout
