@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
         static let autoRefreshOnOpen = "skmole.autoRefreshOnOpen"
         static let menuBarCompanionEnabled = "skmole.menuBarCompanionEnabled"
         static let showFullDiskAccessReminders = "skmole.showFullDiskAccessReminders"
+        static let hasCompletedOnboarding = "skmole.hasCompletedOnboarding"
         static let storageInspectionMode = "skmole.storageInspectionMode"
         static let storageFocusMode = "skmole.storageFocusMode"
         static let storageMinimumSize = "skmole.storageMinimumSize"
@@ -72,6 +73,9 @@ final class AppModel: ObservableObject {
     @Published var cleanupBusy = false
     @Published var cleanupError: String?
     @Published var cleanupProgress: ScanProgress?
+
+    @Published var showOnboarding = false
+    @Published var hasCompletedOnboarding = false
 
     @Published var applications: [InstalledApp] = []
     @Published var trashedApplications: [InstalledApp] = []
@@ -154,6 +158,17 @@ final class AppModel: ObservableObject {
     @Published var gitHubCLIBusy = false
     @Published var gitHubCLIError: String?
 
+    @Published var orphanedFiles: [OrphanedFileCandidate] = []
+    @Published var orphanedFilesBusy = false
+    @Published var orphanedFilesError: String?
+    @Published var orphanedFilesProgress: ScanProgress?
+    @Published var orphanedFilesSearch = ""
+
+    @Published var startupItems: [StartupItem] = []
+    @Published var startupItemsBusy = false
+    @Published var startupItemsError: String?
+    @Published var startupItemBusyID: String?
+
     @Published var optimizationLogs: [OptimizationLog] = []
     @Published var optimizationBusyActionID: String?
     @Published var privilegedHelperState: PrivilegedHelperState = .unavailable
@@ -170,10 +185,12 @@ final class AppModel: ObservableObject {
     private lazy var cleanupScanner = CleanupScanner(guardService: guardService, sizer: sizer)
     private lazy var storageAnalyzer = StorageAnalyzer(guardService: guardService, sizer: sizer)
     private lazy var appInventory = AppInventoryService(guardService: guardService, sizer: sizer)
+    private lazy var orphanedFileScanner = OrphanedFileScanner(guardService: guardService, sizer: sizer)
     private lazy var networkInspector = NetworkInspectorService()
     private lazy var quarantineAudit = QuarantineAuditService(guardService: guardService, sizer: sizer)
     private lazy var homebrewService = HomebrewService()
     private lazy var gitHubCLIService = GitHubCLIService()
+    private let startupItemsService = StartupItemsService()
     private let optimizer = OptimizationService()
     private let privilegedHelper = PrivilegedHelperManager()
     private let menuBarCompanion = MenuBarCompanionManager()
@@ -185,31 +202,37 @@ final class AppModel: ObservableObject {
 
     private var hasLoadedCleanup = false
     private var hasLoadedApplications = false
+    private var hasLoadedOrphanedFiles = false
     private var hasLoadedStorage = false
     private var hasLoadedNetwork = false
     private var hasLoadedQuarantine = false
     private var hasLoadedHomebrew = false
     private var hasLoadedGitHubCLI = false
     private var hasLoadedPrivilegedHelper = false
+    private var hasLoadedStartupItems = false
     private var hasPreparedInitialSelection = false
 
     private var cleanupRequestID = UUID()
     private var applicationsRequestID = UUID()
+    private var orphanedFilesRequestID = UUID()
     private var storageRequestID = UUID()
     private var networkRequestID = UUID()
     private var quarantineRequestID = UUID()
     private var homebrewRequestID = UUID()
     private var homebrewSearchRequestID = UUID()
     private var gitHubCLIRequestID = UUID()
+    private var startupItemsRequestID = UUID()
 
     private var cleanupTask: Task<[CleanupCategorySummary], Never>?
     private var applicationsTask: Task<[InstalledApp], Never>?
+    private var orphanedFilesTask: Task<[OrphanedFileCandidate], Never>?
     private var storageTask: Task<StorageReport, Never>?
     private var networkTask: Task<NetworkInspectorReport, Never>?
     private var quarantineTask: Task<[QuarantinedApplication], Never>?
     private var homebrewTask: Task<HomebrewInventory, Never>?
     private var homebrewSearchTask: Task<[HomebrewPackageSearchResult], Never>?
     private var gitHubCLITask: Task<GitHubCLIInventory, Never>?
+    private var startupItemsTask: Task<[StartupItem], Never>?
     private var homebrewSelectedReference: HomebrewPackageReference?
 
     let optimizeActions = OptimizationService.defaultActions
@@ -393,6 +416,32 @@ final class AppModel: ObservableObject {
         }
     }
 
+    var filteredOrphanedFiles: [OrphanedFileCandidate] {
+        let query = orphanedFilesSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return orphanedFiles }
+
+        return orphanedFiles.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query)
+                || $0.identifierToken.localizedCaseInsensitiveContains(query)
+                || $0.url.path.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var orphanedFileBytes: UInt64 {
+        orphanedFiles.reduce(into: 0) { $0 += $1.sizeBytes }
+    }
+
+    var startupItemsByKind: [(StartupItemKind, [StartupItem])] {
+        StartupItemKind.allCases.compactMap { kind in
+            let matches = startupItems.filter { $0.kind == kind }
+            guard !matches.isEmpty else {
+                return nil
+            }
+
+            return (kind, matches)
+        }
+    }
+
     var cleanupBytes: UInt64 {
         cleanupCategories.reduce(into: 0) { $0 += $1.totalBytes }
     }
@@ -405,6 +454,7 @@ final class AppModel: ObservableObject {
         [
             MaintenanceQuickAction(id: "refresh-all", title: "Refresh All", subtitle: "Reload cleanup, uninstall, and storage data", icon: "arrow.clockwise"),
             MaintenanceQuickAction(id: "smart-care-report", title: "Export Dry Run", subtitle: "Save a maintenance report to disk", icon: "square.and.arrow.up"),
+            MaintenanceQuickAction(id: "orphan-review", title: "Orphan Review", subtitle: "Inspect leftover app support files", icon: "questionmark.folder"),
             MaintenanceQuickAction(id: "network-inspector", title: "Network Inspector", subtitle: "Open the on-demand process and connection view", icon: "network"),
             MaintenanceQuickAction(id: "hidden-storage", title: "Hidden Space", subtitle: "Switch Storage into hidden-space mode", icon: "eye.slash"),
             MaintenanceQuickAction(id: "admin-storage", title: "Admin Space", subtitle: "Inspect VM, system caches, and backups", icon: "lock.rectangle.stack"),
@@ -423,6 +473,8 @@ final class AppModel: ObservableObject {
         self.autoRefreshOnOpen = defaults.object(forKey: PreferenceKey.autoRefreshOnOpen) as? Bool ?? false
         self.menuBarCompanionEnabled = defaults.object(forKey: PreferenceKey.menuBarCompanionEnabled) as? Bool ?? true
         self.showFullDiskAccessReminders = defaults.object(forKey: PreferenceKey.showFullDiskAccessReminders) as? Bool ?? true
+        self.hasCompletedOnboarding = defaults.object(forKey: PreferenceKey.hasCompletedOnboarding) as? Bool ?? false
+        self.showOnboarding = !self.hasCompletedOnboarding
         self.storageInspectionMode = defaults.string(forKey: PreferenceKey.storageInspectionMode).flatMap(StorageInspectionMode.init(rawValue:)) ?? .visible
         self.storageFocusMode = defaults.string(forKey: PreferenceKey.storageFocusMode).flatMap(StorageFocusMode.init(rawValue:)) ?? .balanced
         self.storageMinimumSize = defaults.string(forKey: PreferenceKey.storageMinimumSize).flatMap(StorageMinimumSizeFilter.init(rawValue:)) ?? .all
@@ -446,6 +498,20 @@ final class AppModel: ObservableObject {
     func prepareMainWindow() async {
         syncMenuBarCompanion(launchIfEnabled: menuBarCompanionEnabled)
         refreshFullDiskAccessStatus()
+    }
+
+    func completeOnboarding() {
+        hasCompletedOnboarding = true
+        showOnboarding = false
+        UserDefaults.standard.set(true, forKey: PreferenceKey.hasCompletedOnboarding)
+    }
+
+    func dismissOnboardingForNow() {
+        showOnboarding = false
+    }
+
+    func reopenOnboarding() {
+        showOnboarding = true
     }
 
     func prepareSelection() async {
@@ -495,6 +561,13 @@ final class AppModel: ObservableObject {
         await loadCleanup(force: true)
     }
 
+    func refreshOrphanedFiles() async {
+        if !hasLoadedApplications {
+            await loadApplications(force: true)
+        }
+        await loadOrphanedFiles(force: true)
+    }
+
     func trash(_ candidate: CleanupCandidate) async {
         await trashCleanupCandidates([candidate])
     }
@@ -523,6 +596,95 @@ final class AppModel: ObservableObject {
 
     func refreshApplications() async {
         await loadApplications(force: true)
+    }
+
+    func removeOrphanedFiles(_ candidates: [OrphanedFileCandidate]) async {
+        orphanedFilesBusy = true
+        orphanedFilesError = nil
+
+        for candidate in candidates {
+            do {
+                try await guardService.moveToTrash(candidate.url, purpose: .uninstall)
+            } catch {
+                orphanedFilesError = error.localizedDescription
+            }
+        }
+
+        await loadOrphanedFiles(force: true)
+        if hasLoadedCleanup {
+            await loadCleanup(force: true)
+        }
+        if hasLoadedStorage {
+            await loadStorage(force: true)
+        }
+    }
+
+    func refreshStartupItems() async {
+        await loadStartupItems(force: true)
+    }
+
+    func disableStartupItem(_ item: StartupItem) async {
+        startupItemBusyID = item.id
+        startupItemsError = nil
+
+        do {
+            let output = try await startupItemsService.disable(item)
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Disable \(item.displayName)",
+                    output: output,
+                    succeeded: true,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            await loadStartupItems(force: true)
+        } catch {
+            startupItemsError = error.localizedDescription
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Disable \(item.displayName)",
+                    output: error.localizedDescription,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+        }
+
+        startupItemBusyID = nil
+    }
+
+    func enableStartupItem(_ item: StartupItem) async {
+        startupItemBusyID = item.id
+        startupItemsError = nil
+
+        do {
+            let output = try await startupItemsService.enable(item)
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Enable \(item.displayName)",
+                    output: output,
+                    succeeded: true,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            await loadStartupItems(force: true)
+        } catch {
+            startupItemsError = error.localizedDescription
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Enable \(item.displayName)",
+                    output: error.localizedDescription,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+        }
+
+        startupItemBusyID = nil
     }
 
     func refreshQuarantinedApplications() async {
@@ -740,8 +902,20 @@ final class AppModel: ObservableObject {
         switch action.id {
         case "refresh-all":
             await refreshSmartCareInputs()
+            if hasLoadedOrphanedFiles {
+                await loadOrphanedFiles(force: true)
+            }
+            if hasLoadedStartupItems {
+                await loadStartupItems(force: true)
+            }
         case "smart-care-report":
             await exportDryRunReport()
+        case "orphan-review":
+            open(section: .orphans)
+            if !hasLoadedApplications {
+                await loadApplications(force: true)
+            }
+            await loadOrphanedFiles(force: true)
         case "network-inspector":
             open(section: .network)
             await loadNetwork(force: true)
@@ -1353,6 +1527,14 @@ final class AppModel: ObservableObject {
         async let refreshApplications: Void = loadApplications(force: true)
         async let refreshStorage: Void = loadStorage(force: true)
         _ = await (refreshCleanup, refreshApplications, refreshStorage)
+
+        if hasLoadedOrphanedFiles {
+            await loadOrphanedFiles(force: true)
+        }
+
+        if hasLoadedStartupItems {
+            await loadStartupItems(force: true)
+        }
     }
 
     func exportDryRunReport() async {
@@ -1487,14 +1669,21 @@ final class AppModel: ObservableObject {
             await loadNetwork(force: force || !hasLoadedNetwork)
         case .quarantine:
             await loadQuarantinedApplications(force: force || !hasLoadedQuarantine)
+        case .orphans:
+            let shouldRefreshApplications = force || !hasLoadedApplications
+            let shouldRefreshOrphans = force || !hasLoadedOrphanedFiles
+            await loadApplications(force: shouldRefreshApplications)
+            await loadOrphanedFiles(force: shouldRefreshOrphans)
         case .smartCare:
             let shouldRefreshCleanup = force || !hasLoadedCleanup
             let shouldRefreshApplications = force || !hasLoadedApplications
             let shouldRefreshStorage = force || !hasLoadedStorage
+            let shouldRefreshOrphans = force || !hasLoadedOrphanedFiles
             async let refreshCleanup: Void = loadCleanup(force: shouldRefreshCleanup)
             async let refreshApplications: Void = loadApplications(force: shouldRefreshApplications)
             async let refreshStorage: Void = loadStorage(force: shouldRefreshStorage)
             _ = await (refreshCleanup, refreshApplications, refreshStorage)
+            await loadOrphanedFiles(force: shouldRefreshOrphans)
         case .cleanup:
             await loadCleanup(force: force || !hasLoadedCleanup)
         case .uninstall:
@@ -1502,6 +1691,9 @@ final class AppModel: ObservableObject {
         case .storage:
             await loadStorage(force: force || !hasLoadedStorage)
         case .optimize:
+            if force || !hasLoadedStartupItems {
+                await loadStartupItems(force: true)
+            }
             if force || !hasLoadedPrivilegedHelper {
                 await refreshPrivilegedHelperState()
             }
@@ -1611,6 +1803,53 @@ final class AppModel: ObservableObject {
             }
         }
 
+        updateRecommendedActions()
+    }
+
+    private func loadOrphanedFiles(force: Bool) async {
+        if !force {
+            guard !hasLoadedOrphanedFiles else {
+                return
+            }
+
+            guard orphanedFilesTask == nil else {
+                return
+            }
+        }
+
+        orphanedFilesTask?.cancel()
+        let requestID = UUID()
+        orphanedFilesRequestID = requestID
+
+        orphanedFilesBusy = true
+        orphanedFilesError = nil
+        orphanedFilesProgress = ScanProgress(
+            title: "Orphan review",
+            detail: "Preparing orphan scan",
+            completedUnits: 0,
+            totalUnits: 1
+        )
+
+        let scanner = orphanedFileScanner
+        let installedApps = applications
+        let task = Task { [requestID] in
+            await scanner.scan(installedApps: installedApps) { progress in
+                await MainActor.run {
+                    guard self.orphanedFilesRequestID == requestID else { return }
+                    self.orphanedFilesProgress = progress
+                }
+            }
+        }
+        orphanedFilesTask = task
+
+        let discovered = await task.value
+        guard orphanedFilesRequestID == requestID else { return }
+
+        orphanedFiles = discovered
+        orphanedFilesBusy = false
+        orphanedFilesProgress = nil
+        orphanedFilesTask = nil
+        hasLoadedOrphanedFiles = true
         updateRecommendedActions()
     }
 
@@ -1906,6 +2145,49 @@ final class AppModel: ObservableObject {
         gitHubCLIBusy = false
         gitHubCLITask = nil
         hasLoadedGitHubCLI = true
+    }
+
+    private func loadStartupItems(force: Bool) async {
+        if !force {
+            guard !hasLoadedStartupItems else {
+                return
+            }
+
+            guard startupItemsTask == nil else {
+                return
+            }
+        }
+
+        startupItemsTask?.cancel()
+        let requestID = UUID()
+        startupItemsRequestID = requestID
+
+        startupItemsBusy = true
+        startupItemsError = nil
+
+        let service = startupItemsService
+        let task = Task { [requestID] in
+            do {
+                return try await service.loadItems()
+            } catch {
+                await MainActor.run {
+                    guard self.startupItemsRequestID == requestID else { return }
+                    self.startupItemsError = error.localizedDescription
+                }
+
+                return []
+            }
+        }
+        startupItemsTask = task
+
+        let items = await task.value
+        guard startupItemsRequestID == requestID else { return }
+
+        startupItems = items
+        startupItemsBusy = false
+        startupItemsTask = nil
+        hasLoadedStartupItems = true
+        updateRecommendedActions()
     }
 
     private func loadHomebrewPackageDetail(for reference: HomebrewPackageReference) async {
@@ -2314,6 +2596,22 @@ final class AppModel: ObservableObject {
             )
         }
 
+        if orphanedFileBytes > 0 {
+            actions.append(
+                RecommendedAction(
+                    id: "orphaned-files-review",
+                    title: "Review orphaned app leftovers",
+                    subtitle: ByteFormatting.format(orphanedFileBytes),
+                    detail: "SK Mole found user-domain support files whose owning apps no longer appear installed. Review them before moving them to Trash.",
+                    icon: "questionmark.folder",
+                    priority: .recommended,
+                    estimatedImpactBytes: orphanedFileBytes,
+                    callToAction: "Open Orphans",
+                    intent: .openSection(.orphans)
+                )
+            )
+        }
+
         if let largeFile = storageReport?.largeFiles.first(where: { !$0.isAppBundle && canTrashFromStorage($0) }) {
             actions.append(
                 RecommendedAction(
@@ -2326,6 +2624,22 @@ final class AppModel: ObservableObject {
                     estimatedImpactBytes: largeFile.sizeBytes,
                     callToAction: "Open Storage",
                     intent: .openSection(.storage)
+                )
+            )
+        }
+
+        let activeStartupItems = startupItems.filter { $0.canToggle && !$0.isDisabled }
+        if activeStartupItems.count >= 8 {
+            actions.append(
+                RecommendedAction(
+                    id: "startup-items-review",
+                    title: "Review startup items",
+                    subtitle: "\(activeStartupItems.count) user launch agents are enabled",
+                    detail: "A larger startup set can slow login and keep extra background processes around. SK Mole can review and disable user launch agents one by one.",
+                    icon: "person.crop.circle.badge.plus",
+                    priority: .optional,
+                    callToAction: "Open Optimize",
+                    intent: .openSection(.optimize)
                 )
             )
         }

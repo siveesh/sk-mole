@@ -19,6 +19,7 @@ enum CleanupCategoryID: String, CaseIterable, Identifiable, Hashable {
     case browserLeftovers
     case logs
     case developer
+    case docker
     case packageManagers
     case installers
     case oldDownloads

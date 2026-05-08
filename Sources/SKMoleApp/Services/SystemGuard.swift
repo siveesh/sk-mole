@@ -17,6 +17,9 @@ actor SystemGuard {
         home.appendingPathComponent("Library/Logs"),
         home.appendingPathComponent("Library/Developer/Xcode/DerivedData"),
         home.appendingPathComponent("Library/Developer/CoreSimulator/Caches"),
+        home.appendingPathComponent("Library/Caches/com.docker.docker"),
+        home.appendingPathComponent("Library/Containers/com.docker.docker/Data/log"),
+        home.appendingPathComponent("Library/Containers/com.docker.docker/Data/tmp"),
         home.appendingPathComponent("Downloads"),
         home.appendingPathComponent("Desktop"),
         home.appendingPathComponent("Documents"),
@@ -40,6 +43,7 @@ actor SystemGuard {
         home.appendingPathComponent("Library/Logs"),
         home.appendingPathComponent("Library/Saved Application State"),
         home.appendingPathComponent("Library/Containers"),
+        home.appendingPathComponent("Library/Group Containers"),
         home.appendingPathComponent("Library/WebKit"),
         home.appendingPathComponent("Library/LaunchAgents"),
         home.appendingPathComponent(".Trash")

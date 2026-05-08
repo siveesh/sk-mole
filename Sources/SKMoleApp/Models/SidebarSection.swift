@@ -5,6 +5,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     case homebrew
     case network
     case quarantine
+    case orphans
     case smartCare
     case cleanup
     case uninstall
@@ -19,6 +20,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .homebrew: "Homebrew"
         case .network: "Network"
         case .quarantine: "Quarantine"
+        case .orphans: "Orphans"
         case .smartCare: "Smart Care"
         case .cleanup: "Cleanup"
         case .uninstall: "Uninstaller"
@@ -33,6 +35,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .homebrew: "cup.and.saucer.fill"
         case .network: "network"
         case .quarantine: "shield.slash"
+        case .orphans: "questionmark.folder"
         case .smartCare: "sparkles.rectangle.stack.fill"
         case .cleanup: "sparkles.rectangle.stack"
         case .uninstall: "xmark.app"
@@ -47,6 +50,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .homebrew: "Manage Homebrew packages, casks, services, and maintenance"
         case .network: "On-demand process, connection, and remote-host inspection"
         case .quarantine: "Review quarantined apps and clear com.apple.quarantine deliberately"
+        case .orphans: "Find leftover app support files from apps that no longer appear installed"
         case .smartCare: "Guided recommendations across cleanup, storage, and health"
         case .cleanup: "Preview reclaimable space before moving items to Trash"
         case .uninstall: "Remove apps and user-domain remnants safely"
@@ -61,11 +65,12 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .homebrew: "2"
         case .network: "3"
         case .quarantine: "4"
-        case .smartCare: "5"
-        case .cleanup: "6"
-        case .uninstall: "7"
-        case .storage: "8"
-        case .optimize: "9"
+        case .orphans: "5"
+        case .smartCare: "6"
+        case .cleanup: "7"
+        case .uninstall: "8"
+        case .storage: "9"
+        case .optimize: "0"
         }
     }
 
@@ -79,6 +84,8 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
             self = .network
         case "quarantine":
             self = .quarantine
+        case "orphans", "orphan-review", "leftovers":
+            self = .orphans
         case "smart-care", "smartcare":
             self = .smartCare
         case "cleanup":

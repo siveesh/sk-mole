@@ -24,6 +24,18 @@ struct RootView: View {
         .task(id: model.selection) {
             await model.prepareSelection()
         }
+        .sheet(
+            isPresented: Binding(
+                get: { model.showOnboarding },
+                set: { newValue in
+                    if !newValue {
+                        model.dismissOnboardingForNow()
+                    }
+                }
+            )
+        ) {
+            OnboardingView(model: model)
+        }
         .onOpenURL { url in
             Task { await model.handleIncomingURL(url) }
         }
@@ -80,6 +92,8 @@ struct RootView: View {
             NetworkInspectorView(model: model)
         case .quarantine:
             QuarantineView(model: model)
+        case .orphans:
+            OrphanedFilesView(model: model)
         case .smartCare:
             SmartCareView(model: model)
         case .cleanup:

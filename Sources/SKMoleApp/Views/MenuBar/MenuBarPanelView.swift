@@ -110,6 +110,7 @@ struct MenuBarPanelView: View {
             sectionButton(.network)
             sectionButton(.cleanup)
             sectionButton(.uninstall)
+            sectionButton(.orphans)
             sectionButton(.storage)
             sectionButton(.optimize)
         }

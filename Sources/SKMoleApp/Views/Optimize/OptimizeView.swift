@@ -37,6 +37,8 @@ struct OptimizeView: View {
 
                 helperSection
 
+                StartupItemsSection(model: model)
+
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 18)], spacing: 18) {
                     ForEach(model.privilegedMaintenanceTasks) { task in
                         adminTaskCard(task)

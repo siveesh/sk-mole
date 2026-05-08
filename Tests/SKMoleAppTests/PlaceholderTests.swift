@@ -17,8 +17,32 @@ import SKMoleShared
     #expect(StartupPreference.dashboard.resolve(lastSelection: .cleanup) == .dashboard)
     #expect(StartupPreference.homebrew.resolve(lastSelection: .cleanup) == .homebrew)
     #expect(StartupPreference.quarantine.resolve(lastSelection: .cleanup) == .quarantine)
+    #expect(StartupPreference.orphans.resolve(lastSelection: .cleanup) == .orphans)
     #expect(StartupPreference.rememberLast.resolve(lastSelection: .storage) == .storage)
     #expect(StartupPreference.rememberLast.resolve(lastSelection: nil) == .dashboard)
+}
+
+@Test func orphanScannerNormalizesAndMatchesKnownTokens() async throws {
+    #expect(OrphanedFileScanner.matchToken(for: "group.com.example.app") == "com.example.app")
+    #expect(
+        OrphanedFileScanner.matchesInstalledApp(
+            token: "com.example.app.helper",
+            bundleIdentifiers: ["com.example.app"],
+            appNameTokens: []
+        )
+    )
+    #expect(
+        !OrphanedFileScanner.matchesInstalledApp(
+            token: "com.example.oldapp",
+            bundleIdentifiers: ["com.example.currentapp"],
+            appNameTokens: ["currentapp"]
+        )
+    )
+}
+
+@Test func orphanSidebarSlugResolves() async throws {
+    #expect(SidebarSection(urlSlug: "orphans") == .orphans)
+    #expect(SidebarSection(urlSlug: "leftovers") == .orphans)
 }
 
 @Test func homebrewCommandStringsReflectPackageKind() async throws {

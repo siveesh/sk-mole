@@ -52,6 +52,10 @@ struct MoleCommands: Commands {
                 open(.quarantine)
             }
 
+            Button("Open Orphan Review") {
+                open(.orphans)
+            }
+
             Button("Open Hidden Storage Mode") {
                 model.setStorageInspectionMode(.hidden)
                 open(.storage)

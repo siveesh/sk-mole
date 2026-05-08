@@ -219,7 +219,7 @@ struct SettingsView: View {
 
                 SectionCard(
                     title: "Permissions",
-                    subtitle: "Guide macOS once, then let SK Mole avoid repeated folder-level interruptions during deeper scans.",
+                    subtitle: "Use one place to revisit onboarding, Full Disk Access guidance, and the helper state without hunting through multiple tabs.",
                     symbol: "lock.shield"
                 ) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -259,6 +259,37 @@ struct SettingsView: View {
                                 model.refreshFullDiskAccessStatus()
                             }
                             .buttonStyle(.bordered)
+
+                            Button("Show Onboarding Again") {
+                                model.reopenOnboarding()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        Divider()
+
+                        HStack {
+                            Text("Privileged Helper")
+                                .font(.headline)
+                            Spacer()
+                            Text(model.privilegedHelperState.summary)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(model.privilegedHelperState.isEnabled ? AppPalette.accent.opacity(0.16) : AppPalette.amber.opacity(0.18))
+                                )
+                        }
+
+                        Text(model.privilegedHelperState.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        if let privilegedHelperError = model.privilegedHelperError {
+                            Text(privilegedHelperError)
+                                .font(.caption)
+                                .foregroundStyle(AppPalette.amber)
                         }
                     }
                 }

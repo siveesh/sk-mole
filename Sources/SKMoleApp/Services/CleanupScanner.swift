@@ -77,6 +77,19 @@ actor CleanupScanner {
                 ]
             ),
             CleanupRule(
+                id: .docker,
+                title: "Docker desktop caches",
+                subtitle: "Docker Desktop log and cache folders that are usually safe to rebuild, without touching your images or container data.",
+                icon: "shippingbox.circle.fill",
+                safetyLevel: .review,
+                minimumSize: 16 * 1_024 * 1_024,
+                roots: [
+                    home.appendingPathComponent("Library/Caches/com.docker.docker"),
+                    home.appendingPathComponent("Library/Containers/com.docker.docker/Data/log"),
+                    home.appendingPathComponent("Library/Containers/com.docker.docker/Data/tmp")
+                ]
+            ),
+            CleanupRule(
                 id: .packageManagers,
                 title: "Package manager caches",
                 subtitle: "npm, pnpm, Yarn, and Gradle caches. Safe, but expect slower first rebuilds afterward.",
