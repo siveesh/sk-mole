@@ -183,6 +183,18 @@ final class MaintenanceExportRegistry {
             lines.append("")
         }
 
+        if !context.maintenanceReport.processSummary.isEmpty {
+            lines.append("## Processes")
+            lines.append(contentsOf: context.maintenanceReport.processSummary.map { "- \($0)" })
+            lines.append("")
+        }
+
+        if !context.maintenanceReport.scheduleSummary.isEmpty {
+            lines.append("## Scheduled Maintenance")
+            lines.append(contentsOf: context.maintenanceReport.scheduleSummary.map { "- \($0)" })
+            lines.append("")
+        }
+
         lines.append("## Live Metrics")
         lines.append("- CPU: \(Int((context.metrics.cpuUsage * 100).rounded()))%")
         lines.append("- Memory: \(Int((context.metrics.memoryUsage * 100).rounded()))%")
@@ -210,7 +222,15 @@ final class MaintenanceExportRegistry {
             "Network summary:",
             context.maintenanceReport.networkSummary.isEmpty
                 ? "  - No network snapshot"
-                : context.maintenanceReport.networkSummary.map { "  - \($0)" }.joined(separator: "\n")
+                : context.maintenanceReport.networkSummary.map { "  - \($0)" }.joined(separator: "\n"),
+            "Process summary:",
+            context.maintenanceReport.processSummary.isEmpty
+                ? "  - No process snapshot"
+                : context.maintenanceReport.processSummary.map { "  - \($0)" }.joined(separator: "\n"),
+            "Scheduled maintenance:",
+            context.maintenanceReport.scheduleSummary.isEmpty
+                ? "  - No schedule configured"
+                : context.maintenanceReport.scheduleSummary.map { "  - \($0)" }.joined(separator: "\n")
         ].joined(separator: "\n")
     }
 }

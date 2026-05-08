@@ -108,6 +108,7 @@ struct MenuBarPanelView: View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
             sectionButton(.dashboard)
             sectionButton(.network)
+            sectionButton(.processes)
             sectionButton(.cleanup)
             sectionButton(.uninstall)
             sectionButton(.orphans)

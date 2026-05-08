@@ -18,6 +18,7 @@ actor CleanupScanner {
     private let home = FileManager.default.homeDirectoryForCurrentUser
     private let installerExtensions: Set<String> = ["dmg", "pkg", "xip", "iso"]
     private let duplicateMinimumSize: UInt64 = 16 * 1_024 * 1_024
+    private let sandboxCacheMinimumSize: UInt64 = 32 * 1_024 * 1_024
 
     init(guardService: SystemGuard, sizer: DirectorySizer) {
         self.guardService = guardService
@@ -36,6 +37,15 @@ actor CleanupScanner {
                 safetyLevel: .safe,
                 minimumSize: 32 * 1_024 * 1_024,
                 roots: [home.appendingPathComponent("Library/Caches")]
+            ),
+            CleanupRule(
+                id: .sandboxCaches,
+                title: "Sandbox app caches",
+                subtitle: "Per-app caches inside sandbox containers and group containers that apps can usually rebuild.",
+                icon: "shippingbox.circle",
+                safetyLevel: .review,
+                minimumSize: sandboxCacheMinimumSize,
+                roots: []
             ),
             CleanupRule(
                 id: .browserLeftovers,
@@ -133,37 +143,41 @@ actor CleanupScanner {
 
             var candidates: [CleanupCandidate] = []
 
-            for root in rule.roots where FileManager.default.fileExists(atPath: root.path) {
-                if Task.isCancelled {
-                    return results
-                }
-
-                let children = await sizer.children(of: root, includeHidden: rule.id == .trash)
-
-                for child in children {
+            if rule.id == .sandboxCaches {
+                candidates = await sandboxCacheCandidates()
+            } else {
+                for root in rule.roots where FileManager.default.fileExists(atPath: root.path) {
                     if Task.isCancelled {
                         return results
                     }
 
-                    guard await guardService.canOperate(on: child, purpose: .cleanup) else {
-                        continue
-                    }
+                    let children = await sizer.children(of: root, includeHidden: rule.id == .trash)
 
-                    let size = await sizer.size(of: child)
-                    guard size >= rule.minimumSize else {
-                        continue
-                    }
+                    for child in children {
+                        if Task.isCancelled {
+                            return results
+                        }
 
-                    let values = try? child.resourceValues(forKeys: [.contentModificationDateKey, .localizedNameKey])
-                    let candidate = CleanupCandidate(
-                        url: child,
-                        displayName: values?.localizedName ?? child.lastPathComponent,
-                        sizeBytes: size,
-                        lastModified: values?.contentModificationDate,
-                        rationale: rule.subtitle,
-                        safetyLevel: rule.safetyLevel
-                    )
-                    candidates.append(candidate)
+                        guard await guardService.canOperate(on: child, purpose: .cleanup) else {
+                            continue
+                        }
+
+                        let size = await sizer.size(of: child)
+                        guard size >= rule.minimumSize else {
+                            continue
+                        }
+
+                        let values = try? child.resourceValues(forKeys: [.contentModificationDateKey, .localizedNameKey])
+                        let candidate = CleanupCandidate(
+                            url: child,
+                            displayName: values?.localizedName ?? child.lastPathComponent,
+                            sizeBytes: size,
+                            lastModified: values?.contentModificationDate,
+                            rationale: rule.subtitle,
+                            safetyLevel: rule.safetyLevel
+                        )
+                        candidates.append(candidate)
+                    }
                 }
             }
 
@@ -443,6 +457,71 @@ actor CleanupScanner {
             totalBytes: candidates.reduce(into: 0) { $0 += $1.sizeBytes },
             candidates: candidates
         )
+    }
+
+    private func sandboxCacheCandidates() async -> [CleanupCandidate] {
+        let roots = [
+            home.appendingPathComponent("Library/Containers"),
+            home.appendingPathComponent("Library/Group Containers")
+        ]
+        var candidates: [CleanupCandidate] = []
+
+        for root in roots where fileManager.fileExists(atPath: root.path) {
+            let containers = await sizer.children(of: root, includeHidden: true)
+
+            for container in containers {
+                if Task.isCancelled {
+                    return candidates
+                }
+
+                let cacheCandidates = cacheRoots(in: container)
+                for cacheRoot in cacheCandidates where fileManager.fileExists(atPath: cacheRoot.path) {
+                    guard await guardService.canOperate(on: cacheRoot, purpose: .cleanup) else {
+                        continue
+                    }
+
+                    let size = await sizer.size(of: cacheRoot)
+                    guard size >= sandboxCacheMinimumSize else {
+                        continue
+                    }
+
+                    let values = try? cacheRoot.resourceValues(forKeys: [.contentModificationDateKey, .localizedNameKey])
+                    candidates.append(
+                        CleanupCandidate(
+                            url: cacheRoot,
+                            displayName: readableSandboxCacheName(for: cacheRoot, container: container),
+                            sizeBytes: size,
+                            lastModified: values?.contentModificationDate,
+                            rationale: "Cache content discovered dynamically inside a sandbox or group container. Apps normally rebuild this state, but SK Mole keeps it review-first.",
+                            safetyLevel: .review
+                        )
+                    )
+                }
+            }
+        }
+
+        return Dictionary(grouping: candidates, by: \.id)
+            .compactMap { $0.value.first }
+            .sorted { $0.sizeBytes > $1.sizeBytes }
+    }
+
+    private func cacheRoots(in container: URL) -> [URL] {
+        [
+            container.appendingPathComponent("Data/Library/Caches"),
+            container.appendingPathComponent("Data/Library/Logs"),
+            container.appendingPathComponent("Library/Caches"),
+            container.appendingPathComponent("Library/Logs")
+        ]
+    }
+
+    private func readableSandboxCacheName(for cacheRoot: URL, container: URL) -> String {
+        let containerName = container.lastPathComponent
+
+        if cacheRoot.path.contains("/Library/Logs") {
+            return "\(containerName) logs"
+        }
+
+        return "\(containerName) cache"
     }
 
     private func enumerateFiles(in root: URL, includePackages: Bool) -> [URL] {

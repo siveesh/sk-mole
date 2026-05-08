@@ -88,12 +88,12 @@ actor AppInventoryService {
         )
     }
 
-    func previewRemoval(for app: InstalledApp) async -> UninstallPreview {
-        await preview(for: app, mode: .removeAppAndRemnants)
+    func previewRemoval(for app: InstalledApp, sensitivity: UninstallSensitivityLevel = .enhanced) async -> UninstallPreview {
+        await preview(for: app, mode: .removeAppAndRemnants, sensitivity: sensitivity)
     }
 
-    func previewReset(for app: InstalledApp) async -> UninstallPreview {
-        await preview(for: app, mode: .resetApp)
+    func previewReset(for app: InstalledApp, sensitivity: UninstallSensitivityLevel = .enhanced) async -> UninstallPreview {
+        await preview(for: app, mode: .resetApp, sensitivity: sensitivity)
     }
 
     func discoverTrashedApplications(progress: @escaping @Sendable (ScanProgress) async -> Void = { _ in }) async -> [InstalledApp] {
@@ -127,8 +127,8 @@ actor AppInventoryService {
         return Self.sortedApplications(apps)
     }
 
-    func previewSmartDelete(for app: InstalledApp) async -> UninstallPreview {
-        await preview(for: app, mode: .removeLeftoversOnly)
+    func previewSmartDelete(for app: InstalledApp, sensitivity: UninstallSensitivityLevel = .enhanced) async -> UninstallPreview {
+        await preview(for: app, mode: .removeLeftoversOnly, sensitivity: sensitivity)
     }
 
     func remove(_ preview: UninstallPreview) async throws {
@@ -153,24 +153,37 @@ actor AppInventoryService {
         }
     }
 
-    private func preview(for app: InstalledApp, mode: UninstallPreviewMode) async -> UninstallPreview {
+    private func preview(
+        for app: InstalledApp,
+        mode: UninstallPreviewMode,
+        sensitivity: UninstallSensitivityLevel
+    ) async -> UninstallPreview {
         let exactCandidates = exactRemnantCandidates(for: app)
-        let wildcardCandidates = relatedUserDomainCandidates(for: app)
+        let wildcardCandidates = sensitivity == .strict ? [] : relatedUserDomainCandidates(for: app)
+        let deepCandidates = sensitivity == .deep ? fuzzyUserDomainCandidates(for: app) : []
         var remnants: [AppRemnant] = []
 
-        for url in Array(Set(exactCandidates + wildcardCandidates)) where fileManager.fileExists(atPath: url.path) {
+        for url in Array(Set(exactCandidates + wildcardCandidates + deepCandidates)) where fileManager.fileExists(atPath: url.path) {
             guard await guardService.canOperate(on: url, purpose: .uninstall) else {
                 continue
             }
 
             let size = await sizer.size(of: url)
+            let safetyLevel: SafetyLevel
+            if exactCandidates.contains(url) {
+                safetyLevel = url.path.contains("/LaunchAgents/") ? .review : .safe
+            } else if wildcardCandidates.contains(url) {
+                safetyLevel = .review
+            } else {
+                safetyLevel = .review
+            }
             remnants.append(
                 AppRemnant(
                     url: url,
                     displayName: url.lastPathComponent,
                     sizeBytes: size,
                     rationale: remnantReason(for: url),
-                    safetyLevel: url.path.contains("/LaunchAgents/") ? .review : .safe
+                    safetyLevel: safetyLevel
                 )
             )
         }
@@ -183,7 +196,8 @@ actor AppInventoryService {
             app: app,
             remnants: deduplicated,
             associatedItems: await associatedItems(for: app),
-            mode: mode
+            mode: mode,
+            sensitivity: sensitivity
         )
     }
 
@@ -249,6 +263,25 @@ actor AppInventoryService {
         ]
 
         return wildcardRoots.flatMap { matchingEntries(in: $0, matcher: matcher) }
+    }
+
+    private func fuzzyUserDomainCandidates(for app: InstalledApp) -> [URL] {
+        guard let matcher = associationMatcher(for: app) else {
+            return []
+        }
+
+        let roots = [
+            home.appendingPathComponent("Library/Application Support"),
+            home.appendingPathComponent("Library/Caches"),
+            home.appendingPathComponent("Library/Logs"),
+            home.appendingPathComponent("Library/Preferences/ByHost"),
+            home.appendingPathComponent("Library/Saved Application State"),
+            home.appendingPathComponent("Library/HTTPStorages"),
+            home.appendingPathComponent("Library/Containers"),
+            home.appendingPathComponent("Library/Group Containers")
+        ]
+
+        return roots.flatMap { deepMatchingEntries(in: $0, matcher: matcher) }
     }
 
     private func associatedItems(for app: InstalledApp) async -> [AssociatedAppItem] {
@@ -345,6 +378,32 @@ actor AppInventoryService {
         )) ?? []
 
         return entries.filter { matcher($0.lastPathComponent) }
+    }
+
+    private func deepMatchingEntries(in root: URL, matcher: (String) -> Bool) -> [URL] {
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in true }
+        ) else {
+            return []
+        }
+
+        var matches: [URL] = []
+
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.isPackageKey])
+            if values?.isPackage == true {
+                enumerator.skipDescendants()
+            }
+
+            if matcher(url.lastPathComponent) {
+                matches.append(url)
+            }
+        }
+
+        return matches
     }
 
     private func associationMatcher(for app: InstalledApp) -> ((String) -> Bool)? {

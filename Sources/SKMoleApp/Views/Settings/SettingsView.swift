@@ -40,6 +40,46 @@ struct SettingsView: View {
                 }
 
                 SectionCard(
+                    title: "Uninstall Depth",
+                    subtitle: "Choose how aggressively SK Mole should look for related app leftovers before it builds an uninstall preview.",
+                    symbol: "xmark.app"
+                ) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Picker(
+                            "Preview depth",
+                            selection: Binding(
+                                get: { model.uninstallSensitivity },
+                                set: { newValue in
+                                    model.uninstallSensitivity = newValue
+                                    Task { await model.refreshSelectedAppPreviewForSensitivity() }
+                                }
+                            )
+                        ) {
+                            ForEach(UninstallSensitivityLevel.allCases) { level in
+                                Text(level.title).tag(level)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(UninstallSensitivityLevel.allCases) { level in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Image(systemName: level == model.uninstallSensitivity ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(level == model.uninstallSensitivity ? AppPalette.accent : .secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(level.title)
+                                            .font(.headline)
+                                        Text(level.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SectionCard(
                     title: "Menu Bar Companion",
                     subtitle: "Run a separate helper app in the menu bar so you can reopen or quit cleanly even after the main window or main process is gone.",
                     symbol: "menubar.rectangle"
@@ -295,6 +335,59 @@ struct SettingsView: View {
                 }
 
                 SectionCard(
+                    title: "Scheduled Maintenance",
+                    subtitle: "Run a lightweight scan-and-export cycle on a daily or weekly cadence while SK Mole is running, then save the report to Documents/SK Mole Reports.",
+                    symbol: "calendar.badge.clock"
+                ) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Picker(
+                            "Schedule",
+                            selection: Binding(
+                                get: { model.scheduledMaintenanceInterval },
+                                set: { model.scheduledMaintenanceInterval = $0 }
+                            )
+                        ) {
+                            ForEach(ScheduledMaintenanceInterval.allCases) { interval in
+                                Text(interval.title).tag(interval)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        Picker(
+                            "Export format",
+                            selection: Binding(
+                                get: { model.scheduledMaintenanceExportFormat },
+                                set: { model.scheduledMaintenanceExportFormat = $0 }
+                            )
+                        ) {
+                            ForEach(ScheduledMaintenanceExportFormat.allCases) { format in
+                                Text(format.title).tag(format)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text(
+                            model.lastScheduledMaintenanceRun.map {
+                                "Last scheduled run: \(DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .short))"
+                            } ?? "No scheduled maintenance run has completed yet."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        HStack(spacing: 12) {
+                            Button("Run Now") {
+                                Task { await model.runScheduledMaintenanceNow() }
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Text("These exports are dry-run reports only. SK Mole does not schedule automatic deletion.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                SectionCard(
                     title: "Export Plugins",
                     subtitle: "Exporters are loaded only when you use them, so SK Mole can stay richer without paying the startup cost every time.",
                     symbol: "square.and.arrow.up.on.square"
@@ -306,12 +399,14 @@ struct SettingsView: View {
 
                 SectionCard(
                     title: "Monitoring Notes",
-                    subtitle: "Keep the menu bar useful without turning SK Mole into another heavy background tool.",
+                    subtitle: "Keep the menu bar useful without turning SK Mole into another heavy background tool, while giving Console enough signal to help with debugging.",
                     symbol: "waveform.path.ecg.rectangle"
                 ) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Top-process sampling is throttled to every five seconds to keep overhead low while still showing who is driving CPU and memory spikes.")
+                        Text("Process termination is limited to your own non-system processes and uses a normal terminate signal instead of a force kill.")
                         Text("Battery, power source, swap pressure, thermal state, and per-core activity use public macOS APIs. Fine-grained temperatures, fan RPM, and per-app network accounting still need lower-level or non-public data sources.")
+                        Text("Key navigation, scan, uninstall, process, and maintenance actions now write through unified logging categories so they are visible in Console under the SK Mole subsystem.")
                     }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

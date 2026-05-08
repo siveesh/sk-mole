@@ -90,6 +90,8 @@ struct RootView: View {
             HomebrewView(model: model)
         case .network:
             NetworkInspectorView(model: model)
+        case .processes:
+            ProcessInspectorView(model: model)
         case .quarantine:
             QuarantineView(model: model)
         case .orphans:

@@ -125,6 +125,8 @@ import Testing
         storageSummary: [],
         storageFocusSummary: [],
         networkSummary: [],
+        processSummary: [],
+        scheduleSummary: [],
         trashedApps: [],
         menuBarAlerts: []
     )

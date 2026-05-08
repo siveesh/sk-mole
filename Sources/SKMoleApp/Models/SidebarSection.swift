@@ -4,6 +4,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     case dashboard
     case homebrew
     case network
+    case processes
     case quarantine
     case orphans
     case smartCare
@@ -19,6 +20,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .dashboard: "Dashboard"
         case .homebrew: "Homebrew"
         case .network: "Network"
+        case .processes: "Processes"
         case .quarantine: "Quarantine"
         case .orphans: "Orphans"
         case .smartCare: "Smart Care"
@@ -34,6 +36,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .dashboard: "gauge.with.dots.needle.50percent"
         case .homebrew: "cup.and.saucer.fill"
         case .network: "network"
+        case .processes: "list.bullet.rectangle.portrait"
         case .quarantine: "shield.slash"
         case .orphans: "questionmark.folder"
         case .smartCare: "sparkles.rectangle.stack.fill"
@@ -49,6 +52,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .dashboard: "Real-time system health and fast actions"
         case .homebrew: "Manage Homebrew packages, casks, services, and maintenance"
         case .network: "On-demand process, connection, and remote-host inspection"
+        case .processes: "Inspect active processes and safely terminate user-owned work"
         case .quarantine: "Review quarantined apps and clear com.apple.quarantine deliberately"
         case .orphans: "Find leftover app support files from apps that no longer appear installed"
         case .smartCare: "Guided recommendations across cleanup, storage, and health"
@@ -64,6 +68,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         case .dashboard: "1"
         case .homebrew: "2"
         case .network: "3"
+        case .processes: "p"
         case .quarantine: "4"
         case .orphans: "5"
         case .smartCare: "6"
@@ -82,6 +87,8 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
             self = .homebrew
         case "network":
             self = .network
+        case "processes", "process-inspector", "activity":
+            self = .processes
         case "quarantine":
             self = .quarantine
         case "orphans", "orphan-review", "leftovers":

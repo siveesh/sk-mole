@@ -3,6 +3,7 @@ import Foundation
 
 public struct NativeProcessActivity: Identifiable, Hashable, Sendable {
     public let pid: Int32
+    public let ownerUserID: UInt32
     public let name: String
     public let command: String
     public let cpuPercent: Double
@@ -10,8 +11,9 @@ public struct NativeProcessActivity: Identifiable, Hashable, Sendable {
 
     public var id: Int32 { pid }
 
-    public init(pid: Int32, name: String, command: String, cpuPercent: Double, memoryBytes: UInt64) {
+    public init(pid: Int32, ownerUserID: UInt32, name: String, command: String, cpuPercent: Double, memoryBytes: UInt64) {
         self.pid = pid
+        self.ownerUserID = ownerUserID
         self.name = name
         self.command = command
         self.cpuPercent = cpuPercent
@@ -22,6 +24,7 @@ public struct NativeProcessActivity: Identifiable, Hashable, Sendable {
 public final class NativeProcessSampler {
     private struct ProcessSample {
         let pid: Int32
+        let ownerUserID: UInt32
         let name: String
         let command: String
         let cpuTimeNanos: UInt64
@@ -34,6 +37,10 @@ public final class NativeProcessSampler {
     public init() {}
 
     public func sampleTopProcesses(limit: Int) -> [NativeProcessActivity] {
+        sampleProcesses(limit: limit)
+    }
+
+    public func sampleProcesses(limit: Int? = nil) -> [NativeProcessActivity] {
         let now = Date()
         let elapsed = now.timeIntervalSince(lastSampleDate)
         let previousTimes = previousCPUTime
@@ -54,6 +61,7 @@ public final class NativeProcessSampler {
             activities.append(
                 NativeProcessActivity(
                     pid: sample.pid,
+                    ownerUserID: sample.ownerUserID,
                     name: sample.name,
                     command: sample.command,
                     cpuPercent: cpuPercent,
@@ -65,7 +73,7 @@ public final class NativeProcessSampler {
         previousCPUTime = currentTimes
         lastSampleDate = now
 
-        return activities
+        let sorted = activities
             .sorted { left, right in
                 if abs(left.cpuPercent - right.cpuPercent) > 0.05 {
                     return left.cpuPercent > right.cpuPercent
@@ -77,8 +85,12 @@ public final class NativeProcessSampler {
 
                 return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
             }
-            .prefix(limit)
-            .map { $0 }
+
+        if let limit {
+            return Array(sorted.prefix(limit))
+        }
+
+        return sorted
     }
 
     private func enumerateProcesses() -> [ProcessSample] {
@@ -143,6 +155,7 @@ public final class NativeProcessSampler {
 
         return ProcessSample(
             pid: pid,
+            ownerUserID: shortInfo.pbsi_uid,
             name: name.isEmpty ? URL(fileURLWithPath: command).lastPathComponent : name,
             command: command,
             cpuTimeNanos: cpuTimeNanos,

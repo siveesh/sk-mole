@@ -16,6 +16,7 @@ enum SafetyLevel: String, CaseIterable, Hashable {
 
 enum CleanupCategoryID: String, CaseIterable, Identifiable, Hashable {
     case userCaches
+    case sandboxCaches
     case browserLeftovers
     case logs
     case developer

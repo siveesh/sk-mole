@@ -4,6 +4,7 @@ enum StartupPreference: String, CaseIterable, Identifiable {
     case rememberLast
     case dashboard
     case homebrew
+    case processes
     case quarantine
     case orphans
     case smartCare
@@ -19,6 +20,7 @@ enum StartupPreference: String, CaseIterable, Identifiable {
         case .rememberLast: "Remember last section"
         case .dashboard: "Always open Dashboard"
         case .homebrew: "Always open Homebrew"
+        case .processes: "Always open Processes"
         case .quarantine: "Always open Quarantine"
         case .orphans: "Always open Orphans"
         case .smartCare: "Always open Smart Care"
@@ -37,6 +39,8 @@ enum StartupPreference: String, CaseIterable, Identifiable {
             return .dashboard
         case .homebrew:
             return .homebrew
+        case .processes:
+            return .processes
         case .quarantine:
             return .quarantine
         case .orphans:

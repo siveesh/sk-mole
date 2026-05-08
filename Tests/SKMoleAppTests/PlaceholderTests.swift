@@ -16,6 +16,7 @@ import SKMoleShared
 @Test func startupPreferenceResolvesExpectedSection() async throws {
     #expect(StartupPreference.dashboard.resolve(lastSelection: .cleanup) == .dashboard)
     #expect(StartupPreference.homebrew.resolve(lastSelection: .cleanup) == .homebrew)
+    #expect(StartupPreference.processes.resolve(lastSelection: .cleanup) == .processes)
     #expect(StartupPreference.quarantine.resolve(lastSelection: .cleanup) == .quarantine)
     #expect(StartupPreference.orphans.resolve(lastSelection: .cleanup) == .orphans)
     #expect(StartupPreference.rememberLast.resolve(lastSelection: .storage) == .storage)
@@ -43,6 +44,18 @@ import SKMoleShared
 @Test func orphanSidebarSlugResolves() async throws {
     #expect(SidebarSection(urlSlug: "orphans") == .orphans)
     #expect(SidebarSection(urlSlug: "leftovers") == .orphans)
+    #expect(SidebarSection(urlSlug: "process-inspector") == .processes)
+}
+
+@Test func uninstallSensitivityCatalogRemainsStable() async throws {
+    #expect(UninstallSensitivityLevel.allCases.map(\.rawValue) == ["strict", "enhanced", "deep"])
+    #expect(UninstallSensitivityLevel.deep.subtitle.contains("wider"))
+}
+
+@Test func scheduledMaintenanceFormatMapsToExporter() async throws {
+    #expect(ScheduledMaintenanceExportFormat.markdown.pluginID == .overviewMarkdown)
+    #expect(ScheduledMaintenanceExportFormat.json.pluginID == .dryRunJSON)
+    #expect(ScheduledMaintenanceInterval.daily.minimumSpacing == 86_400)
 }
 
 @Test func homebrewCommandStringsReflectPackageKind() async throws {

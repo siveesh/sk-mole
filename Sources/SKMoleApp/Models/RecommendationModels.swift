@@ -33,6 +33,7 @@ enum RecommendedActionIntent: Hashable {
     case setStorageMode(StorageInspectionMode)
     case revealURL(URL)
     case openFullDiskAccess
+    case openSettings
     case exportDryRunReport
     case runPrivilegedTask(PrivilegedMaintenanceTask)
 }

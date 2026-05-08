@@ -12,6 +12,7 @@ HELPER_TOOLS_DIR="$LIBRARY_DIR/HelperTools"
 LAUNCH_DAEMONS_DIR="$LIBRARY_DIR/LaunchDaemons"
 LOGIN_ITEMS_DIR="$LIBRARY_DIR/LoginItems"
 ICON_PATH="$ROOT_DIR/Resources/AppIcon.icns"
+LOCALIZATION_DIR="$ROOT_DIR/Resources/Localization"
 INFO_TEMPLATE="$ROOT_DIR/Resources/Bundling/Info.plist.template"
 MENU_BAR_HELPER_INFO_TEMPLATE="$ROOT_DIR/Resources/Bundling/MenuBarHelper-Info.plist.template"
 HELPER_PLIST_TEMPLATE="$ROOT_DIR/Resources/Bundling/com.siveesh.skmole.privilegedhelper.plist.template"
@@ -53,6 +54,10 @@ cp "$MENU_BAR_HELPER_INFO_TEMPLATE" "$MENU_BAR_HELPER_CONTENTS_DIR/Info.plist"
 if [[ -f "$ICON_PATH" ]]; then
     cp "$ICON_PATH" "$RESOURCES_DIR/AppIcon.icns"
     cp "$ICON_PATH" "$MENU_BAR_HELPER_RESOURCES_DIR/AppIcon.icns"
+fi
+
+if [[ -d "$LOCALIZATION_DIR" ]]; then
+    cp -R "$LOCALIZATION_DIR"/. "$RESOURCES_DIR"/
 fi
 
 if command -v codesign >/dev/null 2>&1; then

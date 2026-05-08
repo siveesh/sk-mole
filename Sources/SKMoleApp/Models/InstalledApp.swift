@@ -26,6 +26,33 @@ enum UninstallPreviewMode: Hashable {
     }
 }
 
+enum UninstallSensitivityLevel: String, CaseIterable, Hashable, Identifiable {
+    case strict
+    case enhanced
+    case deep
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .strict: "Strict"
+        case .enhanced: "Enhanced"
+        case .deep: "Deep"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .strict:
+            return "Only exact bundle-ID support files."
+        case .enhanced:
+            return "Exact files plus strong related matches."
+        case .deep:
+            return "Adds wider user-domain pattern matching."
+        }
+    }
+}
+
 struct InstalledApp: Identifiable, Hashable {
     let name: String
     let bundleIdentifier: String?
@@ -77,6 +104,7 @@ struct UninstallPreview: Hashable {
     let remnants: [AppRemnant]
     let associatedItems: [AssociatedAppItem]
     let mode: UninstallPreviewMode
+    let sensitivity: UninstallSensitivityLevel
 
     var removableBytes: UInt64 {
         switch mode {

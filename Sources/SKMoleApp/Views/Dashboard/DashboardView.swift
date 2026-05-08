@@ -62,6 +62,11 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.bordered)
 
+                Button("Open Processes") {
+                    model.open(section: .processes)
+                }
+                .buttonStyle(.bordered)
+
                 Button("Refresh Monitoring") {
                     model.refreshFullDiskAccessStatus()
                 }
@@ -289,6 +294,25 @@ struct DashboardView: View {
 
                     Button("Open Network Inspector") {
                         model.open(section: .network)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)
+
+            SectionCard(
+                title: "Process inspector",
+                subtitle: "Review active processes by CPU or memory, then terminate only the user-owned work SK Mole considers safe.",
+                symbol: "list.bullet.rectangle.portrait"
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("\(model.processInspectorItems.count)")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                    Text(model.processInspectorItems.isEmpty ? "No process snapshot yet." : "\(model.processInspectorItems.filter(SystemGuard.canTerminateSnapshot).count) processes are safe to terminate from SK Mole.")
+                        .foregroundStyle(.secondary)
+
+                    Button("Open Process Inspector") {
+                        model.open(section: .processes)
                     }
                     .buttonStyle(.borderedProminent)
                 }

@@ -1,4 +1,5 @@
 import Foundation
+import SKMoleShared
 
 enum GuardPurpose {
     case cleanup
@@ -14,6 +15,8 @@ actor SystemGuard {
 
     private lazy var cleanupRoots: [URL] = [
         home.appendingPathComponent("Library/Caches"),
+        home.appendingPathComponent("Library/Containers"),
+        home.appendingPathComponent("Library/Group Containers"),
         home.appendingPathComponent("Library/Logs"),
         home.appendingPathComponent("Library/Developer/Xcode/DerivedData"),
         home.appendingPathComponent("Library/Developer/CoreSimulator/Caches"),
@@ -74,6 +77,36 @@ actor SystemGuard {
         "/Library/Apple"
     ]
 
+    private lazy var sensitiveHomeRoots: [URL] = [
+        home.appendingPathComponent(".ssh"),
+        home.appendingPathComponent(".gnupg"),
+        home.appendingPathComponent(".aws"),
+        home.appendingPathComponent(".config"),
+        home.appendingPathComponent("Library/Keychains"),
+        home.appendingPathComponent("Library/Mail"),
+        home.appendingPathComponent("Library/Messages"),
+        home.appendingPathComponent("Library/Safari"),
+        home.appendingPathComponent("Library/Mobile Documents"),
+        home.appendingPathComponent("Pictures/Photos Library.photoslibrary")
+    ]
+
+    private let protectedDotComponents: Set<String> = [
+        ".git",
+        ".svn",
+        ".hg",
+        ".ssh",
+        ".gnupg",
+        ".aws"
+    ]
+
+    private let protectedDotFiles: Set<String> = [
+        ".zshrc",
+        ".bashrc",
+        ".bash_profile",
+        ".profile",
+        ".gitconfig"
+    ]
+
     func canOperate(on url: URL, purpose: GuardPurpose) -> Bool {
         let normalized = URLPathSafety.standardized(url)
         let path = normalized.path
@@ -84,9 +117,17 @@ actor SystemGuard {
             return false
         }
 
+        if hasSensitiveComponents(normalized) || isSensitiveHomePath(normalized) {
+            return false
+        }
+
         switch purpose {
         case .cleanup:
-            return cleanupRoots.contains(where: { URLPathSafety.isDescendant(normalized, of: $0) })
+            guard cleanupRoots.contains(where: { URLPathSafety.isDescendant(normalized, of: $0) }) else {
+                return false
+            }
+
+            return isSupportedCleanupPath(normalized)
         case .uninstall:
             if path.hasPrefix("/System/Applications") {
                 return false
@@ -131,8 +172,54 @@ actor SystemGuard {
         return normalized.hasPrefix("/System/Applications") || (bundleIdentifier?.hasPrefix("com.apple.") ?? false)
     }
 
+    func canTerminate(process: NativeProcessActivity) -> Bool {
+        Self.canTerminateSnapshot(process)
+    }
+
+    nonisolated static func canTerminateSnapshot(_ process: NativeProcessActivity) -> Bool {
+        guard process.pid > 1, process.pid != getpid() else {
+            return false
+        }
+
+        guard process.ownerUserID == getuid() else {
+            return false
+        }
+
+        let protectedNames = ["SK Mole", "SK Mole Companion", "Finder", "Dock", "System Settings", "Activity Monitor", "loginwindow"]
+        if protectedNames.contains(where: { process.name.localizedCaseInsensitiveCompare($0) == .orderedSame }) {
+            return false
+        }
+
+        let commandURL = URL(fileURLWithPath: process.command)
+        let normalized = URLPathSafety.standardized(commandURL)
+        let path = normalized.path
+
+        let protectedRoots = [
+            "/System",
+            "/bin",
+            "/sbin",
+            "/usr",
+            "/private/var/db",
+            "/private/var/root",
+            "/System/Volumes",
+            "/Library/Apple"
+        ]
+
+        if protectedRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+            return false
+        }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return path.hasPrefix("/Applications/")
+            || URLPathSafety.isDescendant(normalized, of: home)
+            || path.hasPrefix("/opt/homebrew/")
+            || path.hasPrefix("/usr/local/")
+    }
+
     func moveToTrash(_ url: URL, purpose: GuardPurpose) async throws {
-        guard canOperate(on: url, purpose: purpose) else {
+        let normalized = URLPathSafety.standardized(url)
+
+        guard canOperate(on: normalized, purpose: purpose) else {
             throw NSError(
                 domain: "SKMole.SystemGuard",
                 code: 1,
@@ -140,18 +227,24 @@ actor SystemGuard {
             )
         }
 
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        try validateDeletionTarget(normalized, purpose: purpose)
+
+        guard FileManager.default.fileExists(atPath: normalized.path) else {
             return
         }
 
+        SKMoleLog.guardrails.info("Moving item to Trash: \(normalized.path, privacy: .public)")
+
         try await MainActor.run {
             var trashedURL: NSURL?
-            try FileManager.default.trashItem(at: url, resultingItemURL: &trashedURL)
+            try FileManager.default.trashItem(at: normalized, resultingItemURL: &trashedURL)
         }
     }
 
     func removePermanently(_ url: URL, purpose: GuardPurpose) throws {
-        guard canOperate(on: url, purpose: purpose) else {
+        let normalized = URLPathSafety.standardized(url)
+
+        guard canOperate(on: normalized, purpose: purpose) else {
             throw NSError(
                 domain: "SKMole.SystemGuard",
                 code: 2,
@@ -159,10 +252,67 @@ actor SystemGuard {
             )
         }
 
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        try validateDeletionTarget(normalized, purpose: purpose)
+
+        guard FileManager.default.fileExists(atPath: normalized.path) else {
             return
         }
 
-        try FileManager.default.removeItem(at: url)
+        SKMoleLog.guardrails.info("Removing item permanently: \(normalized.path, privacy: .public)")
+        try FileManager.default.removeItem(at: normalized)
+    }
+
+    private func validateDeletionTarget(_ url: URL, purpose: GuardPurpose) throws {
+        let normalized = URLPathSafety.standardized(url)
+        let keys: Set<URLResourceKey> = [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey]
+        let values = try normalized.resourceValues(forKeys: keys)
+
+        if values.isSymbolicLink == true {
+            throw NSError(
+                domain: "SKMole.SystemGuard",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "SK Mole refuses to operate on symbolic links for \(purpose)."]
+            )
+        }
+
+        guard !hasSensitiveComponents(normalized), !isSensitiveHomePath(normalized) else {
+            throw NSError(
+                domain: "SKMole.SystemGuard",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "SK Mole blocked a sensitive path while validating this action."]
+            )
+        }
+    }
+
+    private func hasSensitiveComponents(_ url: URL) -> Bool {
+        let components = url.pathComponents.map { $0.lowercased() }
+
+        if components.contains(where: { protectedDotComponents.contains($0) }) {
+            return true
+        }
+
+        guard let last = components.last else {
+            return false
+        }
+
+        return protectedDotFiles.contains(last)
+    }
+
+    private func isSensitiveHomePath(_ url: URL) -> Bool {
+        sensitiveHomeRoots.contains(where: { URLPathSafety.isDescendant(url, of: $0) })
+    }
+
+    private func isSupportedCleanupPath(_ url: URL) -> Bool {
+        let normalizedPath = url.path
+
+        if normalizedPath.contains("/Library/Containers/") || normalizedPath.contains("/Library/Group Containers/") {
+            return normalizedPath.contains("/Library/Caches/")
+                || normalizedPath.contains("/Data/Library/Caches/")
+                || normalizedPath.contains("/Library/Logs/")
+                || normalizedPath.contains("/Data/Library/Logs/")
+                || normalizedPath.contains("/tmp/")
+        }
+
+        return true
     }
 }

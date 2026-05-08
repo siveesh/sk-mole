@@ -48,6 +48,10 @@ struct MoleCommands: Commands {
                 open(.network)
             }
 
+            Button("Open Process Inspector") {
+                open(.processes)
+            }
+
             Button("Open Quarantine Review") {
                 open(.quarantine)
             }

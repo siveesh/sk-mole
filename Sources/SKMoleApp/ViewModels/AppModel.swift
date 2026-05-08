@@ -12,12 +12,17 @@ final class AppModel: ObservableObject {
         static let menuBarCompanionEnabled = "skmole.menuBarCompanionEnabled"
         static let showFullDiskAccessReminders = "skmole.showFullDiskAccessReminders"
         static let hasCompletedOnboarding = "skmole.hasCompletedOnboarding"
+        static let uninstallSensitivity = "skmole.uninstallSensitivity"
         static let storageInspectionMode = "skmole.storageInspectionMode"
         static let storageFocusMode = "skmole.storageFocusMode"
         static let storageMinimumSize = "skmole.storageMinimumSize"
         static let storageCollapseClutter = "skmole.storageCollapseClutter"
         static let networkResolveHostnames = "skmole.networkResolveHostnames"
         static let networkIncludeListeningSockets = "skmole.networkIncludeListeningSockets"
+        static let processSortMode = "skmole.processSortMode"
+        static let scheduledMaintenanceInterval = "skmole.scheduledMaintenanceInterval"
+        static let scheduledMaintenanceFormat = "skmole.scheduledMaintenanceFormat"
+        static let scheduledMaintenanceLastRun = "skmole.scheduledMaintenanceLastRun"
     }
 
     private enum HistoryLimit {
@@ -80,6 +85,11 @@ final class AppModel: ObservableObject {
     @Published var applications: [InstalledApp] = []
     @Published var trashedApplications: [InstalledApp] = []
     @Published var appSearch = ""
+    @Published var uninstallSensitivity: UninstallSensitivityLevel = .enhanced {
+        didSet {
+            UserDefaults.standard.set(uninstallSensitivity.rawValue, forKey: PreferenceKey.uninstallSensitivity)
+        }
+    }
     @Published var selectedApp: InstalledApp?
     @Published var uninstallPreview: UninstallPreview?
     @Published var uninstallBusy = false
@@ -127,6 +137,33 @@ final class AppModel: ObservableObject {
     @Published var networkIncludeListeningSockets = true {
         didSet {
             UserDefaults.standard.set(networkIncludeListeningSockets, forKey: PreferenceKey.networkIncludeListeningSockets)
+        }
+    }
+
+    @Published var processInspectorItems: [NativeProcessActivity] = []
+    @Published var processInspectorBusy = false
+    @Published var processInspectorError: String?
+    @Published var processSearch = ""
+    @Published var processSortMode: ProcessSortMode = .cpu {
+        didSet {
+            UserDefaults.standard.set(processSortMode.rawValue, forKey: PreferenceKey.processSortMode)
+        }
+    }
+    @Published var processTerminationBusyPID: Int32?
+
+    @Published var scheduledMaintenanceInterval: ScheduledMaintenanceInterval = .off {
+        didSet {
+            UserDefaults.standard.set(scheduledMaintenanceInterval.rawValue, forKey: PreferenceKey.scheduledMaintenanceInterval)
+        }
+    }
+    @Published var scheduledMaintenanceExportFormat: ScheduledMaintenanceExportFormat = .markdown {
+        didSet {
+            UserDefaults.standard.set(scheduledMaintenanceExportFormat.rawValue, forKey: PreferenceKey.scheduledMaintenanceFormat)
+        }
+    }
+    @Published var lastScheduledMaintenanceRun: Date? {
+        didSet {
+            UserDefaults.standard.set(lastScheduledMaintenanceRun, forKey: PreferenceKey.scheduledMaintenanceLastRun)
         }
     }
 
@@ -187,6 +224,7 @@ final class AppModel: ObservableObject {
     private lazy var appInventory = AppInventoryService(guardService: guardService, sizer: sizer)
     private lazy var orphanedFileScanner = OrphanedFileScanner(guardService: guardService, sizer: sizer)
     private lazy var networkInspector = NetworkInspectorService()
+    private lazy var processInspector = ProcessInspectorService(guardService: guardService)
     private lazy var quarantineAudit = QuarantineAuditService(guardService: guardService, sizer: sizer)
     private lazy var homebrewService = HomebrewService()
     private lazy var gitHubCLIService = GitHubCLIService()
@@ -205,6 +243,7 @@ final class AppModel: ObservableObject {
     private var hasLoadedOrphanedFiles = false
     private var hasLoadedStorage = false
     private var hasLoadedNetwork = false
+    private var hasLoadedProcesses = false
     private var hasLoadedQuarantine = false
     private var hasLoadedHomebrew = false
     private var hasLoadedGitHubCLI = false
@@ -217,6 +256,7 @@ final class AppModel: ObservableObject {
     private var orphanedFilesRequestID = UUID()
     private var storageRequestID = UUID()
     private var networkRequestID = UUID()
+    private var processRequestID = UUID()
     private var quarantineRequestID = UUID()
     private var homebrewRequestID = UUID()
     private var homebrewSearchRequestID = UUID()
@@ -228,12 +268,14 @@ final class AppModel: ObservableObject {
     private var orphanedFilesTask: Task<[OrphanedFileCandidate], Never>?
     private var storageTask: Task<StorageReport, Never>?
     private var networkTask: Task<NetworkInspectorReport, Never>?
+    private var processTask: Task<[NativeProcessActivity], Never>?
     private var quarantineTask: Task<[QuarantinedApplication], Never>?
     private var homebrewTask: Task<HomebrewInventory, Never>?
     private var homebrewSearchTask: Task<[HomebrewPackageSearchResult], Never>?
     private var gitHubCLITask: Task<GitHubCLIInventory, Never>?
     private var startupItemsTask: Task<[StartupItem], Never>?
     private var homebrewSelectedReference: HomebrewPackageReference?
+    private var scheduledMaintenanceTask: Task<Void, Never>?
 
     let optimizeActions = OptimizationService.defaultActions
     let privilegedMaintenanceTasks = PrivilegedMaintenanceTask.allCases
@@ -303,6 +345,42 @@ final class AppModel: ObservableObject {
 
     var homebrewServices: [HomebrewServiceEntry] {
         homebrewInventory?.services ?? []
+    }
+
+    var filteredProcessInspectorItems: [NativeProcessActivity] {
+        let query = processSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseItems: [NativeProcessActivity]
+
+        switch processSortMode {
+        case .cpu:
+            baseItems = processInspectorItems.sorted { left, right in
+                if abs(left.cpuPercent - right.cpuPercent) > 0.05 {
+                    return left.cpuPercent > right.cpuPercent
+                }
+                return left.memoryBytes > right.memoryBytes
+            }
+        case .memory:
+            baseItems = processInspectorItems.sorted { left, right in
+                if left.memoryBytes != right.memoryBytes {
+                    return left.memoryBytes > right.memoryBytes
+                }
+                return left.cpuPercent > right.cpuPercent
+            }
+        case .name:
+            baseItems = processInspectorItems.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        }
+
+        guard !query.isEmpty else {
+            return baseItems
+        }
+
+        return baseItems.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.command.localizedCaseInsensitiveContains(query)
+                || "\($0.pid)".contains(query)
+        }
     }
 
     var filteredQuarantinedApplications: [QuarantinedApplication] {
@@ -456,6 +534,7 @@ final class AppModel: ObservableObject {
             MaintenanceQuickAction(id: "smart-care-report", title: "Export Dry Run", subtitle: "Save a maintenance report to disk", icon: "square.and.arrow.up"),
             MaintenanceQuickAction(id: "orphan-review", title: "Orphan Review", subtitle: "Inspect leftover app support files", icon: "questionmark.folder"),
             MaintenanceQuickAction(id: "network-inspector", title: "Network Inspector", subtitle: "Open the on-demand process and connection view", icon: "network"),
+            MaintenanceQuickAction(id: "process-inspector", title: "Process Inspector", subtitle: "Review active processes and terminate safe user-owned work", icon: "list.bullet.rectangle.portrait"),
             MaintenanceQuickAction(id: "hidden-storage", title: "Hidden Space", subtitle: "Switch Storage into hidden-space mode", icon: "eye.slash"),
             MaintenanceQuickAction(id: "admin-storage", title: "Admin Space", subtitle: "Inspect VM, system caches, and backups", icon: "lock.rectangle.stack"),
             MaintenanceQuickAction(id: "review-trash-apps", title: "Review Trash Apps", subtitle: "Preview leftover removal for apps already in Trash", icon: "trash.square"),
@@ -475,12 +554,17 @@ final class AppModel: ObservableObject {
         self.showFullDiskAccessReminders = defaults.object(forKey: PreferenceKey.showFullDiskAccessReminders) as? Bool ?? true
         self.hasCompletedOnboarding = defaults.object(forKey: PreferenceKey.hasCompletedOnboarding) as? Bool ?? false
         self.showOnboarding = !self.hasCompletedOnboarding
+        self.uninstallSensitivity = defaults.string(forKey: PreferenceKey.uninstallSensitivity).flatMap(UninstallSensitivityLevel.init(rawValue:)) ?? .enhanced
         self.storageInspectionMode = defaults.string(forKey: PreferenceKey.storageInspectionMode).flatMap(StorageInspectionMode.init(rawValue:)) ?? .visible
         self.storageFocusMode = defaults.string(forKey: PreferenceKey.storageFocusMode).flatMap(StorageFocusMode.init(rawValue:)) ?? .balanced
         self.storageMinimumSize = defaults.string(forKey: PreferenceKey.storageMinimumSize).flatMap(StorageMinimumSizeFilter.init(rawValue:)) ?? .all
         self.storageCollapseCommonClutter = defaults.object(forKey: PreferenceKey.storageCollapseClutter) as? Bool ?? true
         self.networkResolveHostnames = defaults.object(forKey: PreferenceKey.networkResolveHostnames) as? Bool ?? false
         self.networkIncludeListeningSockets = defaults.object(forKey: PreferenceKey.networkIncludeListeningSockets) as? Bool ?? true
+        self.processSortMode = defaults.string(forKey: PreferenceKey.processSortMode).flatMap(ProcessSortMode.init(rawValue:)) ?? .cpu
+        self.scheduledMaintenanceInterval = defaults.string(forKey: PreferenceKey.scheduledMaintenanceInterval).flatMap(ScheduledMaintenanceInterval.init(rawValue:)) ?? .off
+        self.scheduledMaintenanceExportFormat = defaults.string(forKey: PreferenceKey.scheduledMaintenanceFormat).flatMap(ScheduledMaintenanceExportFormat.init(rawValue:)) ?? .markdown
+        self.lastScheduledMaintenanceRun = defaults.object(forKey: PreferenceKey.scheduledMaintenanceLastRun) as? Date
         self.menuBarCompanionSettings = companionSettingsStore.load()
 
         updateFullDiskAccessBannerVisibility()
@@ -493,11 +577,15 @@ final class AppModel: ObservableObject {
                 self?.record(snapshot: snapshot)
             }
         }
+
+        startScheduledMaintenanceLoop()
     }
 
     func prepareMainWindow() async {
+        SKMoleLog.lifecycle.info("Preparing main window")
         syncMenuBarCompanion(launchIfEnabled: menuBarCompanionEnabled)
         refreshFullDiskAccessStatus()
+        await runScheduledMaintenanceIfNeeded(reason: "window-open")
     }
 
     func completeOnboarding() {
@@ -517,6 +605,7 @@ final class AppModel: ObservableObject {
     func prepareSelection() async {
         let shouldForceRefresh = !hasPreparedInitialSelection && autoRefreshOnOpen
         hasPreparedInitialSelection = true
+        SKMoleLog.sidebar.info("Preparing section: \(self.selection.rawValue, privacy: .public)")
         await loadData(for: selection, force: shouldForceRefresh)
     }
 
@@ -533,6 +622,7 @@ final class AppModel: ObservableObject {
     }
 
     func open(section: SidebarSection) {
+        SKMoleLog.sidebar.info("Opening section: \(section.rawValue, privacy: .public)")
         selection = section
     }
 
@@ -554,6 +644,10 @@ final class AppModel: ObservableObject {
 
         if networkReport != nil {
             await loadNetwork(force: true)
+        }
+
+        if hasLoadedProcesses {
+            await loadProcesses(force: true)
         }
     }
 
@@ -731,7 +825,7 @@ final class AppModel: ObservableObject {
         selectedApp = app
         uninstallBusy = true
         uninstallError = nil
-        uninstallPreview = await appInventory.previewSmartDelete(for: app)
+        uninstallPreview = await appInventory.previewSmartDelete(for: app, sensitivity: uninstallSensitivity)
         uninstallBusy = false
     }
 
@@ -747,7 +841,27 @@ final class AppModel: ObservableObject {
         guard let selectedApp, !selectedApp.isInTrash else { return }
         uninstallBusy = true
         uninstallError = nil
-        uninstallPreview = await appInventory.previewReset(for: selectedApp)
+        uninstallPreview = await appInventory.previewReset(for: selectedApp, sensitivity: uninstallSensitivity)
+        uninstallBusy = false
+    }
+
+    func refreshSelectedAppPreviewForSensitivity() async {
+        guard let selectedApp else {
+            return
+        }
+
+        uninstallBusy = true
+        uninstallError = nil
+
+        switch uninstallPreview?.mode {
+        case .resetApp:
+            uninstallPreview = await appInventory.previewReset(for: selectedApp, sensitivity: uninstallSensitivity)
+        case .removeLeftoversOnly:
+            uninstallPreview = await appInventory.previewSmartDelete(for: selectedApp, sensitivity: uninstallSensitivity)
+        case .removeAppAndRemnants, .none:
+            uninstallPreview = await defaultPreview(for: selectedApp)
+        }
+
         uninstallBusy = false
     }
 
@@ -846,7 +960,7 @@ final class AppModel: ObservableObject {
             if let uninstallPreview, uninstallPreview.app.id == selectedApp.id, uninstallPreview.mode == .resetApp {
                 preview = uninstallPreview
             } else {
-                preview = await appInventory.previewReset(for: selectedApp)
+                preview = await appInventory.previewReset(for: selectedApp, sensitivity: uninstallSensitivity)
             }
             try await appInventory.remove(preview)
             uninstallPreview = await defaultPreview(for: selectedApp)
@@ -908,6 +1022,9 @@ final class AppModel: ObservableObject {
             if hasLoadedStartupItems {
                 await loadStartupItems(force: true)
             }
+            if hasLoadedProcesses {
+                await loadProcesses(force: true)
+            }
         case "smart-care-report":
             await exportDryRunReport()
         case "orphan-review":
@@ -919,6 +1036,9 @@ final class AppModel: ObservableObject {
         case "network-inspector":
             open(section: .network)
             await loadNetwork(force: true)
+        case "process-inspector":
+            open(section: .processes)
+            await loadProcesses(force: true)
         case "hidden-storage":
             setStorageInspectionMode(.hidden)
         case "admin-storage":
@@ -946,6 +1066,46 @@ final class AppModel: ObservableObject {
 
     func refreshNetwork() async {
         await loadNetwork(force: true)
+    }
+
+    func refreshProcesses() async {
+        await loadProcesses(force: true)
+    }
+
+    func terminateProcess(_ process: NativeProcessActivity) async {
+        processTerminationBusyPID = process.pid
+        processInspectorError = nil
+
+        do {
+            let result = try await processInspector.terminate(process)
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Terminate \(result.processName)",
+                    output: result.detail,
+                    succeeded: result.succeeded,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            await loadProcesses(force: true)
+        } catch {
+            processInspectorError = error.localizedDescription
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Terminate \(process.name)",
+                    output: error.localizedDescription,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+        }
+
+        processTerminationBusyPID = nil
+    }
+
+    func runScheduledMaintenanceNow() async {
+        await performScheduledMaintenance(reason: "manual-run")
     }
 
     func refreshHomebrew() async {
@@ -1526,7 +1686,8 @@ final class AppModel: ObservableObject {
         async let refreshCleanup: Void = loadCleanup(force: true)
         async let refreshApplications: Void = loadApplications(force: true)
         async let refreshStorage: Void = loadStorage(force: true)
-        _ = await (refreshCleanup, refreshApplications, refreshStorage)
+        async let refreshProcesses: Void = hasLoadedProcesses ? loadProcesses(force: true) : ()
+        _ = await (refreshCleanup, refreshApplications, refreshStorage, refreshProcesses)
 
         if hasLoadedOrphanedFiles {
             await loadOrphanedFiles(force: true)
@@ -1578,6 +1739,7 @@ final class AppModel: ObservableObject {
                 ),
                 at: 0
             )
+            SKMoleLog.maintenance.info("Saved export \(document.descriptor.title, privacy: .public) to \(destination.path, privacy: .public)")
         } catch {
             optimizationLogs.insert(
                 OptimizationLog(
@@ -1588,7 +1750,90 @@ final class AppModel: ObservableObject {
                 ),
                 at: 0
             )
+            SKMoleLog.maintenance.error("Export failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func startScheduledMaintenanceLoop() {
+        scheduledMaintenanceTask?.cancel()
+        scheduledMaintenanceTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(900))
+                await self?.runScheduledMaintenanceIfNeeded(reason: "timer")
+            }
+        }
+    }
+
+    private func runScheduledMaintenanceIfNeeded(reason: String) async {
+        guard let spacing = scheduledMaintenanceInterval.minimumSpacing else {
+            return
+        }
+
+        if let lastScheduledMaintenanceRun,
+           Date().timeIntervalSince(lastScheduledMaintenanceRun) < spacing {
+            return
+        }
+
+        await performScheduledMaintenance(reason: reason)
+    }
+
+    private func performScheduledMaintenance(reason: String) async {
+        SKMoleLog.maintenance.info("Running scheduled maintenance (\(reason, privacy: .public))")
+
+        async let refreshCleanup: Void = loadCleanup(force: true)
+        async let refreshApplications: Void = loadApplications(force: true)
+        async let refreshStorage: Void = loadStorage(force: true)
+        async let refreshProcesses: Void = loadProcesses(force: true)
+        _ = await (refreshCleanup, refreshApplications, refreshStorage, refreshProcesses)
+
+        if hasLoadedOrphanedFiles || !orphanedFiles.isEmpty {
+            await loadOrphanedFiles(force: true)
+        }
+
+        let context = exportContext()
+
+        do {
+            let document = try exportRegistry.export(
+                plugin: scheduledMaintenanceExportFormat.pluginID,
+                context: context
+            )
+            let destination = try scheduledMaintenanceDestination(for: document.descriptor)
+            try document.data.write(to: destination, options: .atomic)
+            lastScheduledMaintenanceRun = .now
+
+            let output = "Saved scheduled \(document.descriptor.title) export to \(destination.path)"
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Scheduled Maintenance",
+                    output: output,
+                    succeeded: true,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            SKMoleLog.maintenance.info("\(output, privacy: .public)")
+        } catch {
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Scheduled Maintenance",
+                    output: error.localizedDescription,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            SKMoleLog.maintenance.error("Scheduled maintenance failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func scheduledMaintenanceDestination(for descriptor: MaintenanceExportPluginDescriptor) throws -> URL {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/SK Mole Reports", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: nil)
+
+        let formatter = ISO8601DateFormatter()
+        let timestamp = formatter.string(from: .now).replacingOccurrences(of: ":", with: "-")
+        return root.appendingPathComponent("\(descriptor.suggestedBaseName)-\(timestamp).\(descriptor.fileExtension)")
     }
 
     func performRecommendedAction(_ recommendation: RecommendedAction) async {
@@ -1624,6 +1869,8 @@ final class AppModel: ObservableObject {
             reveal(url)
         case .openFullDiskAccess:
             openFullDiskAccessSettings()
+        case .openSettings:
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         case .exportDryRunReport:
             await exportDryRunReport()
         case .runPrivilegedTask(let task):
@@ -1667,6 +1914,8 @@ final class AppModel: ObservableObject {
             _ = await (refreshHomebrew, refreshGitHubCLI)
         case .network:
             await loadNetwork(force: force || !hasLoadedNetwork)
+        case .processes:
+            await loadProcesses(force: force || !hasLoadedProcesses)
         case .quarantine:
             await loadQuarantinedApplications(force: force || !hasLoadedQuarantine)
         case .orphans:
@@ -1717,6 +1966,7 @@ final class AppModel: ObservableObject {
 
         cleanupBusy = true
         cleanupError = nil
+        SKMoleLog.scans.info("Starting cleanup scan")
         cleanupProgress = ScanProgress(
             title: "Cleanup scan",
             detail: "Preparing cleanup scan",
@@ -1740,6 +1990,7 @@ final class AppModel: ObservableObject {
 
         cleanupCategories = results
         cleanupBusy = false
+        SKMoleLog.scans.info("Finished cleanup scan with \(results.count, privacy: .public) categories")
         cleanupProgress = nil
         cleanupTask = nil
         hasLoadedCleanup = true
@@ -1763,6 +2014,7 @@ final class AppModel: ObservableObject {
 
         uninstallBusy = true
         uninstallError = nil
+        SKMoleLog.scans.info("Starting application inventory scan")
         applicationDiscoveryProgress = ScanProgress(
             title: "App inventory",
             detail: "Discovering installed apps",
@@ -1790,6 +2042,7 @@ final class AppModel: ObservableObject {
         applications = discovered
         trashedApplications = trashed
         uninstallBusy = false
+        SKMoleLog.scans.info("Finished application inventory scan with \(discovered.count, privacy: .public) managed apps and \(trashed.count, privacy: .public) trashed apps")
         applicationDiscoveryProgress = nil
         applicationsTask = nil
         hasLoadedApplications = true
@@ -1823,6 +2076,7 @@ final class AppModel: ObservableObject {
 
         orphanedFilesBusy = true
         orphanedFilesError = nil
+        SKMoleLog.scans.info("Starting orphan review scan")
         orphanedFilesProgress = ScanProgress(
             title: "Orphan review",
             detail: "Preparing orphan scan",
@@ -1847,6 +2101,7 @@ final class AppModel: ObservableObject {
 
         orphanedFiles = discovered
         orphanedFilesBusy = false
+        SKMoleLog.scans.info("Finished orphan review scan with \(discovered.count, privacy: .public) candidates")
         orphanedFilesProgress = nil
         orphanedFilesTask = nil
         hasLoadedOrphanedFiles = true
@@ -1937,6 +2192,7 @@ final class AppModel: ObservableObject {
 
         storageBusy = true
         storageError = nil
+        SKMoleLog.scans.info("Starting storage scan")
         storageProgress = ScanProgress(
             title: "Storage scan",
             detail: "Preparing storage scan",
@@ -1960,6 +2216,7 @@ final class AppModel: ObservableObject {
 
         storageReport = report
         storageBusy = false
+        SKMoleLog.scans.info("Finished storage scan across \(report.volumes.count, privacy: .public) visible volumes")
         storageProgress = nil
         storageTask = nil
         hasLoadedStorage = true
@@ -1997,6 +2254,7 @@ final class AppModel: ObservableObject {
 
         networkBusy = true
         networkError = nil
+        SKMoleLog.scans.info("Starting network snapshot")
 
         let inspector = networkInspector
         let resolveHostnames = networkResolveHostnames
@@ -2031,8 +2289,45 @@ final class AppModel: ObservableObject {
 
         networkReport = report
         networkBusy = false
+        SKMoleLog.scans.info("Finished network snapshot with \(report.processes.count, privacy: .public) processes")
         networkTask = nil
         hasLoadedNetwork = true
+        updateRecommendedActions()
+    }
+
+    private func loadProcesses(force: Bool) async {
+        if !force {
+            guard !hasLoadedProcesses else {
+                return
+            }
+
+            guard processTask == nil else {
+                return
+            }
+        }
+
+        processTask?.cancel()
+        let requestID = UUID()
+        processRequestID = requestID
+
+        processInspectorBusy = true
+        processInspectorError = nil
+        SKMoleLog.processes.info("Refreshing process inspector snapshot")
+
+        let inspector = processInspector
+        let task = Task {
+            await inspector.snapshot()
+        }
+        processTask = task
+
+        let processes = await task.value
+        guard processRequestID == requestID else { return }
+
+        processInspectorItems = processes
+        processInspectorBusy = false
+        SKMoleLog.processes.info("Loaded \(processes.count, privacy: .public) processes into inspector")
+        processTask = nil
+        hasLoadedProcesses = true
         updateRecommendedActions()
     }
 
@@ -2386,10 +2681,10 @@ final class AppModel: ObservableObject {
 
     private func defaultPreview(for app: InstalledApp) async -> UninstallPreview {
         if app.isInTrash {
-            return await appInventory.previewSmartDelete(for: app)
+            return await appInventory.previewSmartDelete(for: app, sensitivity: uninstallSensitivity)
         }
 
-        return await appInventory.previewRemoval(for: app)
+        return await appInventory.previewRemoval(for: app, sensitivity: uninstallSensitivity)
     }
 
     private func maintenanceReport() -> MaintenanceReport {
@@ -2413,6 +2708,8 @@ final class AppModel: ObservableObject {
             storageSummary: storageSummaryLines(),
             storageFocusSummary: storageFocusSummaryLines(),
             networkSummary: networkSummaryLines(),
+            processSummary: processSummaryLines(),
+            scheduleSummary: scheduledMaintenanceSummaryLines(),
             trashedApps: trashedAppSummary,
             menuBarAlerts: alertSummary
         )
@@ -2713,6 +3010,36 @@ final class AppModel: ObservableObject {
             )
         }
 
+        if let hottestProcess = metrics.topProcesses.first, hottestProcess.cpuPercent >= 55 {
+            actions.append(
+                RecommendedAction(
+                    id: "process-inspector-\(hottestProcess.pid)",
+                    title: "Inspect a hot process",
+                    subtitle: "\(hottestProcess.name) • \(String(format: "%.1f%% CPU", hottestProcess.cpuPercent))",
+                    detail: "SK Mole is seeing a user-visible CPU spike. Open the process inspector for a wider list and, when safe, terminate non-system work from there.",
+                    icon: "list.bullet.rectangle.portrait",
+                    priority: .recommended,
+                    callToAction: "Open Processes",
+                    intent: .openSection(.processes)
+                )
+            )
+        }
+
+        if scheduledMaintenanceInterval == .off {
+            actions.append(
+                RecommendedAction(
+                    id: "scheduled-maintenance-off",
+                    title: "Set up scheduled reports",
+                    subtitle: "Automatic dry-run exports are still off.",
+                    detail: "A daily or weekly report makes it easier to spot storage drift, recurring startup items, and cleanup growth before the Mac feels heavy.",
+                    icon: "calendar.badge.clock",
+                    priority: .optional,
+                    callToAction: "Open Settings",
+                    intent: .openSettings
+                )
+            )
+        }
+
         if hasLoadedCleanup || hasLoadedApplications || hasLoadedStorage {
             actions.append(
                 RecommendedAction(
@@ -2799,6 +3126,30 @@ final class AppModel: ObservableObject {
             lines.append("Listening sockets included: \(networkReport.includesListeningSockets ? "Yes" : "No")")
         } else {
             lines.append("Network inspector has not been loaded yet.")
+        }
+
+        return lines
+    }
+
+    private func processSummaryLines() -> [String] {
+        var lines = ["Process snapshot count: \(processInspectorItems.count)"]
+
+        if let hottest = processInspectorItems.max(by: { $0.cpuPercent < $1.cpuPercent }) {
+            lines.append("Hottest process: \(hottest.name) (\(String(format: "%.1f%% CPU", hottest.cpuPercent)))")
+        }
+
+        lines.append("Sort mode: \(processSortMode.title)")
+        return lines
+    }
+
+    private func scheduledMaintenanceSummaryLines() -> [String] {
+        var lines = ["Schedule: \(scheduledMaintenanceInterval.title)"]
+        lines.append("Export format: \(scheduledMaintenanceExportFormat.title)")
+
+        if let lastScheduledMaintenanceRun {
+            lines.append("Last run: \(ISO8601DateFormatter().string(from: lastScheduledMaintenanceRun))")
+        } else {
+            lines.append("Last run: none")
         }
 
         return lines

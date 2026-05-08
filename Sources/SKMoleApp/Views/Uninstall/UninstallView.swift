@@ -148,24 +148,46 @@ struct UninstallView: View {
 
                         if let preview = model.uninstallPreview {
                             if !app.isInTrash {
-                                HStack(spacing: 10) {
-                                    previewModeButton(
-                                        title: "Uninstall Preview",
-                                        symbol: "xmark.app",
-                                        isSelected: preview.mode == .removeAppAndRemnants
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Picker(
+                                        "Uninstall depth",
+                                        selection: Binding(
+                                            get: { model.uninstallSensitivity },
+                                            set: { newValue in
+                                                model.uninstallSensitivity = newValue
+                                                Task { await model.refreshSelectedAppPreviewForSensitivity() }
+                                            }
+                                        )
                                     ) {
-                                        Task { await model.previewDefaultRemovalForSelectedApp() }
+                                        ForEach(UninstallSensitivityLevel.allCases) { level in
+                                            Text(level.title).tag(level)
+                                        }
                                     }
-                                    .disabled(model.uninstallBusy)
+                                    .pickerStyle(.segmented)
 
-                                    previewModeButton(
-                                        title: "Reset Preview",
-                                        symbol: "arrow.counterclockwise",
-                                        isSelected: preview.mode == .resetApp
-                                    ) {
-                                        Task { await model.previewResetForSelectedApp() }
+                                    Text(model.uninstallSensitivity.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+
+                                    HStack(spacing: 10) {
+                                        previewModeButton(
+                                            title: "Uninstall Preview",
+                                            symbol: "xmark.app",
+                                            isSelected: preview.mode == .removeAppAndRemnants
+                                        ) {
+                                            Task { await model.previewDefaultRemovalForSelectedApp() }
+                                        }
+                                        .disabled(model.uninstallBusy)
+
+                                        previewModeButton(
+                                            title: "Reset Preview",
+                                            symbol: "arrow.counterclockwise",
+                                            isSelected: preview.mode == .resetApp
+                                        ) {
+                                            Task { await model.previewResetForSelectedApp() }
+                                        }
+                                        .disabled(model.uninstallBusy)
                                     }
-                                    .disabled(model.uninstallBusy)
                                 }
                             } else {
                                 Text("This app is already in Trash, so SK Mole will only review and remove leftovers that still live outside Trash.")
@@ -177,6 +199,7 @@ struct UninstallView: View {
                                 metricBlock(ByteFormatting.format(preview.removableBytes), primaryMetricSubtitle(for: preview))
                                 metricBlock("\(preview.remnants.count)", remnantsMetricSubtitle(for: preview))
                                 metricBlock("\(preview.associatedItems.count)", "related items")
+                                metricBlock(preview.sensitivity.title, "preview depth")
                                 Spacer()
                             }
 
@@ -406,6 +429,10 @@ struct UninstallView: View {
 
             Text("Bulk removal still uses the same preview-safe uninstall flow under the hood for each selected app. Protected apps cannot be selected here, and apps already in Trash will only have leftovers removed.")
                 .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text("Current depth: \(model.uninstallSensitivity.title) — \(model.uninstallSensitivity.subtitle)")
+                .font(.caption)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 10) {
