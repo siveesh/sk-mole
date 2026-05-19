@@ -1,4 +1,5 @@
 import Foundation
+import SKMoleShared
 
 actor HomebrewService {
     private let fileManager = FileManager.default
@@ -312,43 +313,24 @@ actor HomebrewService {
     }
 
     private func runProcess(executable: String, arguments: [String]) async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                let pipe = Pipe()
-                let buffer = ProcessOutputBuffer()
+        let result = try await ProcessRunner.run(
+            executable: executable,
+            arguments: arguments,
+            environment: Self.processEnvironment(for: executable),
+            timeout: timeout(for: arguments),
+            maxOutputBytes: 12 * 1_024 * 1_024
+        )
+        return ProcessResult(output: result.output, terminationStatus: result.terminationStatus)
+    }
 
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-                process.environment = Self.processEnvironment(for: executable)
-                process.standardOutput = pipe
-                process.standardError = pipe
-
-                do {
-                    pipe.fileHandleForReading.readabilityHandler = { handle in
-                        let chunk = handle.availableData
-                        guard !chunk.isEmpty else { return }
-                        buffer.append(chunk)
-                    }
-
-                    process.terminationHandler = { process in
-                        pipe.fileHandleForReading.readabilityHandler = nil
-                        let remainder = pipe.fileHandleForReading.readDataToEndOfFile()
-                        buffer.append(remainder)
-                        let finalData = buffer.snapshot()
-
-                        let output = String(decoding: finalData, as: UTF8.self)
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        continuation.resume(returning: ProcessResult(output: output, terminationStatus: process.terminationStatus))
-                    }
-
-                    try process.run()
-                } catch {
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    continuation.resume(throwing: error)
-                }
-            }
+    private func timeout(for arguments: [String]) -> TimeInterval {
+        if arguments.contains("upgrade") || arguments.contains("install") || arguments.contains("cleanup") {
+            return 600
         }
+        if arguments.contains("doctor") || arguments.contains("--json=v2") {
+            return 180
+        }
+        return 60
     }
 
     private static func processEnvironment(for executable: String) -> [String: String] {
@@ -549,25 +531,6 @@ actor HomebrewService {
 private struct ProcessResult {
     let output: String
     let terminationStatus: Int32
-}
-
-private final class ProcessOutputBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-
-    func append(_ chunk: Data) {
-        guard !chunk.isEmpty else { return }
-        lock.lock()
-        data.append(chunk)
-        lock.unlock()
-    }
-
-    func snapshot() -> Data {
-        lock.lock()
-        let copy = data
-        lock.unlock()
-        return copy
-    }
 }
 
 private struct BrewInfoPayload: Decodable {

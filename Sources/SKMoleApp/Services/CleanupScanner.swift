@@ -238,23 +238,23 @@ actor CleanupScanner {
         var candidates: [CleanupCandidate] = []
 
         for root in roots where fileManager.fileExists(atPath: root.path) {
-            for file in enumerateFiles(in: root, includePackages: true) {
+            await enumerateFiles(in: root, includePackages: true) { file in
                 if Task.isCancelled {
-                    break
+                    return false
                 }
 
                 guard await guardService.canOperate(on: file, purpose: .cleanup) else {
-                    continue
+                    return true
                 }
 
                 let lowerExtension = file.pathExtension.lowercased()
                 guard installerExtensions.contains(lowerExtension) else {
-                    continue
+                    return true
                 }
 
                 let size = await sizer.size(of: file)
                 guard size >= 8 * 1_024 * 1_024 else {
-                    continue
+                    return true
                 }
 
                 let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .localizedNameKey])
@@ -268,6 +268,8 @@ actor CleanupScanner {
                         safetyLevel: .review
                     )
                 )
+
+                return true
             }
         }
 
@@ -367,15 +369,21 @@ actor CleanupScanner {
         }
 
         var sizeBuckets: [UInt64: [DuplicateSource]] = [:]
+        var duplicateSourcesConsidered = 0
+        let duplicateSourceLimit = 5_000
 
-        for root in roots where fileManager.fileExists(atPath: root.path) {
-            for file in enumerateFiles(in: root, includePackages: false) {
+        duplicateRoots: for root in roots where fileManager.fileExists(atPath: root.path) {
+            let shouldContinue = await enumerateFiles(in: root, includePackages: false) { file in
                 if Task.isCancelled {
-                    break
+                    return false
+                }
+
+                guard duplicateSourcesConsidered < duplicateSourceLimit else {
+                    return false
                 }
 
                 guard await guardService.canOperate(on: file, purpose: .cleanup) else {
-                    continue
+                    return true
                 }
 
                 let values = try? file.resourceValues(forKeys: [
@@ -388,14 +396,15 @@ actor CleanupScanner {
                     .localizedNameKey
                 ])
                 guard values?.isDirectory != true else {
-                    continue
+                    return true
                 }
 
                 let size = UInt64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? values?.fileSize ?? 0)
                 guard size >= duplicateMinimumSize else {
-                    continue
+                    return true
                 }
 
+                duplicateSourcesConsidered += 1
                 sizeBuckets[size, default: []].append(
                     DuplicateSource(
                         url: file,
@@ -404,6 +413,12 @@ actor CleanupScanner {
                         displayName: values?.localizedName ?? file.lastPathComponent
                     )
                 )
+
+                return duplicateSourcesConsidered < duplicateSourceLimit
+            }
+
+            if !shouldContinue {
+                break duplicateRoots
             }
         }
 
@@ -442,6 +457,10 @@ actor CleanupScanner {
                             safetyLevel: .review
                         )
                     )
+
+                    if candidates.count > 96 {
+                        candidates = Array(candidates.sorted { $0.sizeBytes > $1.sizeBytes }.prefix(48))
+                    }
                 }
             }
         }
@@ -524,18 +543,22 @@ actor CleanupScanner {
         return "\(containerName) cache"
     }
 
-    private func enumerateFiles(in root: URL, includePackages: Bool) -> [URL] {
+    @discardableResult
+    private func enumerateFiles(
+        in root: URL,
+        includePackages: Bool,
+        visit: (URL) async -> Bool
+    ) async -> Bool {
         guard let enumerator = fileManager.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey, .localizedNameKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles],
             errorHandler: { _, _ in true }
         ) else {
-            return []
+            return true
         }
 
-        var results: [URL] = []
-        for case let url as URL in enumerator {
+        while let url = enumerator.nextObject() as? URL {
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
             let isDirectory = values?.isDirectory == true
             let isPackage = values?.isPackage == true
@@ -545,6 +568,7 @@ actor CleanupScanner {
             }
 
             if isDirectory, !includePackages {
+                enumerator.skipDescendants()
                 continue
             }
 
@@ -552,10 +576,12 @@ actor CleanupScanner {
                 enumerator.skipDescendants()
             }
 
-            results.append(url)
+            guard await visit(url) else {
+                return false
+            }
         }
 
-        return results
+        return true
     }
 
     private func digest(for url: URL) -> String? {

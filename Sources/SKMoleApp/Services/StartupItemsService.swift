@@ -1,4 +1,5 @@
 import Foundation
+import SKMoleShared
 
 actor StartupItemsService {
     private struct RootSpec {
@@ -90,6 +91,11 @@ actor StartupItemsService {
         loadedLabels: Set<String>,
         disabledLabels: Set<String>
     ) async throws -> StartupItem? {
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > 1 * 1_024 * 1_024 {
+            return nil
+        }
+
         let data = try Data(contentsOf: url)
         let plist = try PropertyListSerialization.propertyList(from: data, format: nil)
 
@@ -163,36 +169,13 @@ actor StartupItemsService {
     }
 
     private func runLaunchctl(arguments: [String]) async throws -> StartupProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                let outputPipe = Pipe()
-                let errorPipe = Pipe()
-
-                process.executableURL = self.launchctlURL
-                process.arguments = arguments
-                process.standardOutput = outputPipe
-                process.standardError = errorPipe
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-
-                    let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                    let error = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                    let combined = [output, error]
-                        .map { String(decoding: $0, as: UTF8.self) }
-                        .joined(separator: "\n")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                    continuation.resume(
-                        returning: StartupProcessResult(output: combined, terminationStatus: process.terminationStatus)
-                    )
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
+        let result = try await ProcessRunner.run(
+            executable: launchctlURL.path,
+            arguments: arguments,
+            timeout: 15,
+            maxOutputBytes: 2 * 1_024 * 1_024
+        )
+        return StartupProcessResult(output: result.output, terminationStatus: result.terminationStatus)
     }
 
     private static func displayName(for label: String) -> String {

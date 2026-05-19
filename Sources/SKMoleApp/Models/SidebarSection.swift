@@ -2,6 +2,7 @@ import Foundation
 
 enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     case dashboard
+    case updates
     case homebrew
     case fileIntelligence
     case network
@@ -19,6 +20,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     var title: String {
         switch self {
         case .dashboard: "Dashboard"
+        case .updates: "Updates"
         case .homebrew: "Homebrew"
         case .fileIntelligence: "File Intelligence"
         case .network: "Network"
@@ -36,6 +38,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     var symbol: String {
         switch self {
         case .dashboard: "gauge.with.dots.needle.50percent"
+        case .updates: "arrow.triangle.2.circlepath.circle"
         case .homebrew: "cup.and.saucer.fill"
         case .fileIntelligence: "doc.text.viewfinder"
         case .network: "network"
@@ -53,6 +56,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     var subtitle: String {
         switch self {
         case .dashboard: "Real-time system health and fast actions"
+        case .updates: "Check application, App Store, Homebrew, and GitHub updates"
         case .homebrew: "Manage Homebrew packages, casks, services, and maintenance"
         case .fileIntelligence: "Use Magika to classify files by content and scan folders recursively"
         case .network: "On-demand process, connection, and remote-host inspection"
@@ -70,6 +74,7 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
     var shortcutKey: Character {
         switch self {
         case .dashboard: "1"
+        case .updates: "u"
         case .homebrew: "2"
         case .fileIntelligence: "f"
         case .network: "3"
@@ -88,6 +93,8 @@ enum SidebarSection: String, CaseIterable, Hashable, Identifiable {
         switch urlSlug {
         case "dashboard":
             self = .dashboard
+        case "updates", "update-check", "software-update":
+            self = .updates
         case "homebrew", "brew":
             self = .homebrew
         case "file-intelligence", "file-intel", "magika":

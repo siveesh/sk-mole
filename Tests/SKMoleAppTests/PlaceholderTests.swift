@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import SKMoleApp
@@ -5,6 +6,74 @@ import SKMoleShared
 
 @Test func byteFormattingUsesUnits() async throws {
     #expect(ByteFormatting.format(1_024 * 1_024).contains("MB"))
+}
+
+@Test func processRunnerCapturesOutputAndExitStatus() async throws {
+    let result = try await ProcessRunner.run(
+        executable: "/bin/echo",
+        arguments: ["hello sk mole"],
+        timeout: 5,
+        maxOutputBytes: 1_024
+    )
+
+    #expect(result.terminationStatus == 0)
+    #expect(result.output == "hello sk mole")
+}
+
+@Test func processRunnerTimesOutLongRunningCommands() async throws {
+    do {
+        _ = try await ProcessRunner.run(
+            executable: "/bin/sleep",
+            arguments: ["5"],
+            timeout: 1,
+            maxOutputBytes: 1_024
+        )
+        Issue.record("Expected the process runner to time out.")
+    } catch let error as ProcessRunnerError {
+        guard case .timedOut = error else {
+            Issue.record("Expected timeout, received \(error.localizedDescription).")
+            return
+        }
+    }
+}
+
+@Test func processRunnerEscalatesTimedOutProcessesThatIgnoreTermination() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let pidURL = directory.appendingPathComponent("pid.txt")
+    let scriptURL = directory.appendingPathComponent("ignore-term.sh")
+    let script = """
+    trap '' TERM
+    echo $$ > "\(pidURL.path)"
+    while true; do sleep 1; done
+    """
+    try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+    do {
+        _ = try await ProcessRunner.run(
+            executable: "/bin/sh",
+            arguments: [scriptURL.path],
+            timeout: 1,
+            maxOutputBytes: 1_024
+        )
+        Issue.record("Expected the process runner to time out.")
+    } catch let error as ProcessRunnerError {
+        guard case .timedOut = error else {
+            Issue.record("Expected timeout, received \(error.localizedDescription).")
+            return
+        }
+    }
+
+    try await Task.sleep(for: .milliseconds(1_600))
+    let pid = try String(contentsOf: pidURL, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if let pidValue = Int32(pid) {
+        #expect(kill(pidValue, 0) == -1)
+    } else {
+        Issue.record("The helper script did not record a valid PID.")
+    }
 }
 
 @Test func privilegedTaskCatalogIsStable() async throws {
@@ -15,6 +84,7 @@ import SKMoleShared
 
 @Test func startupPreferenceResolvesExpectedSection() async throws {
     #expect(StartupPreference.dashboard.resolve(lastSelection: .cleanup) == .dashboard)
+    #expect(StartupPreference.updates.resolve(lastSelection: .cleanup) == .updates)
     #expect(StartupPreference.homebrew.resolve(lastSelection: .cleanup) == .homebrew)
     #expect(StartupPreference.fileIntelligence.resolve(lastSelection: .cleanup) == .fileIntelligence)
     #expect(StartupPreference.processes.resolve(lastSelection: .cleanup) == .processes)
@@ -43,10 +113,172 @@ import SKMoleShared
 }
 
 @Test func orphanSidebarSlugResolves() async throws {
+    #expect(SidebarSection(urlSlug: "updates") == .updates)
     #expect(SidebarSection(urlSlug: "orphans") == .orphans)
     #expect(SidebarSection(urlSlug: "leftovers") == .orphans)
     #expect(SidebarSection(urlSlug: "magika") == .fileIntelligence)
     #expect(SidebarSection(urlSlug: "process-inspector") == .processes)
+}
+
+@Test func updateVersionNormalizationHandlesLeadingV() async throws {
+    #expect(AppUpdateService.normalizedVersion("v1.2.3") == "1.2.3")
+    #expect(AppUpdateService.compareVersions("1.2.3", "v1.2.4") == .orderedAscending)
+    #expect(AppUpdateService.compareVersions("v2.0", "2.0") == .orderedSame)
+}
+
+@Test func updateScheduleIntervalsRemainStable() async throws {
+    #expect(AppUpdateCheckInterval.off.minimumSpacing == nil)
+    #expect(AppUpdateCheckInterval.everySixHours.minimumSpacing == 21_600)
+    #expect(AppUpdateCheckInterval.daily.minimumSpacing == 86_400)
+}
+
+@Test func updateReleaseNotesPreviewCollapsesWhitespace() async throws {
+    let item = AppUpdateItem(
+        id: "demo",
+        kind: .application,
+        displayName: "Demo",
+        bundleIdentifier: "com.example.demo",
+        installedVersion: "1.0",
+        latestVersion: "1.1",
+        sourceKind: .github,
+        status: .updateAvailable,
+        detail: "A new version is available.",
+        sourceDescription: "GitHub",
+        appURL: nil,
+        homepageURL: nil,
+        primaryURL: nil,
+        primaryURLTitle: nil,
+        secondaryURL: nil,
+        secondaryURLTitle: nil,
+        homebrewReference: nil,
+        appStoreAdamID: nil,
+        commandPreview: nil,
+        canAutoInstall: false,
+        releaseNotesSummary: "Line one.\n\nLine two with extra spacing.",
+        releaseNotesURL: nil,
+        releaseNotesURLTitle: nil,
+        fullReleaseNotesURL: nil,
+        fullReleaseNotesURLTitle: nil,
+        publishedAt: nil
+    )
+
+    #expect(item.releaseNotesPreview == "Line one. Line two with extra spacing.")
+}
+
+@Test func updateStatusStoreRoundTripsSnapshot() async throws {
+    let tempURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("json")
+    let store = AppUpdateStatusStore(fileURL: tempURL)
+    let snapshot = AppUpdateStatusSnapshot(
+        scannedAt: Date(timeIntervalSince1970: 1_000),
+        availableCount: 5,
+        automaticCount: 2,
+        manualCount: 3,
+        ignoredCount: 1,
+        deferredCount: 1
+    )
+
+    try store.save(snapshot)
+    let loaded = try #require(store.load())
+
+    #expect(loaded == snapshot)
+    #expect(loaded.actionableCount == 3)
+}
+
+@Test func updateStatusStoreIgnoresOversizedFiles() async throws {
+    let tempURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("json")
+    defer { try? FileManager.default.removeItem(at: tempURL) }
+
+    try String(repeating: "x", count: 600 * 1_024).write(to: tempURL, atomically: true, encoding: .utf8)
+    let store = AppUpdateStatusStore(fileURL: tempURL)
+
+    #expect(store.load() == nil)
+}
+
+@Test @MainActor func updatesFeatureStoreBuildsSuppressedAndFilteredBuckets() async throws {
+    let automatic = AppUpdateItem(
+        id: "demo-auto",
+        kind: .application,
+        displayName: "Demo Auto",
+        bundleIdentifier: "com.example.auto",
+        installedVersion: "1.0",
+        latestVersion: "1.1",
+        sourceKind: .github,
+        status: .updateAvailable,
+        detail: "A new version is available.",
+        sourceDescription: "GitHub",
+        appURL: nil,
+        homepageURL: nil,
+        primaryURL: nil,
+        primaryURLTitle: nil,
+        secondaryURL: nil,
+        secondaryURLTitle: nil,
+        homebrewReference: nil,
+        appStoreAdamID: nil,
+        commandPreview: nil,
+        canAutoInstall: true,
+        releaseNotesSummary: nil,
+        releaseNotesURL: nil,
+        releaseNotesURLTitle: nil,
+        fullReleaseNotesURL: nil,
+        fullReleaseNotesURLTitle: nil,
+        publishedAt: nil
+    )
+    let manual = AppUpdateItem(
+        id: "demo-manual",
+        kind: .application,
+        displayName: "Demo Manual",
+        bundleIdentifier: "com.example.manual",
+        installedVersion: "1.0",
+        latestVersion: "2.0",
+        sourceKind: .sparkle,
+        status: .updateAvailable,
+        detail: "Manual update available.",
+        sourceDescription: "Sparkle",
+        appURL: nil,
+        homepageURL: nil,
+        primaryURL: nil,
+        primaryURLTitle: nil,
+        secondaryURL: nil,
+        secondaryURLTitle: nil,
+        homebrewReference: nil,
+        appStoreAdamID: nil,
+        commandPreview: nil,
+        canAutoInstall: false,
+        releaseNotesSummary: nil,
+        releaseNotesURL: nil,
+        releaseNotesURLTitle: nil,
+        fullReleaseNotesURL: nil,
+        fullReleaseNotesURLTitle: nil,
+        publishedAt: nil
+    )
+    let report = AppUpdateReport(
+        scannedAt: .now,
+        appStoreAutomation: AppStoreAutomationStatus(executablePath: nil, version: nil, accountName: nil, accountDetail: nil),
+        scannedApplicationCount: 2,
+        scannedPackageCount: 0,
+        items: [automatic, manual]
+    )
+    let store = UpdatesFeatureStore()
+    let deferredUntil = Date().addingTimeInterval(3_600).timeIntervalSinceReferenceDate
+
+    store.rebuild(
+        report: report,
+        searchQuery: "demo",
+        filter: .attention,
+        ignoredVersions: [UpdatesFeatureStore.decisionKey(for: automatic): "1.1"],
+        deferredExpirations: [UpdatesFeatureStore.decisionKey(for: manual): deferredUntil]
+    )
+
+    #expect(store.activeAvailableItems.isEmpty)
+    #expect(store.ignoredItems.map(\.id) == [automatic.id])
+    #expect(store.deferredItems.map(\.id) == [manual.id])
+    #expect(store.filteredAvailableItems.isEmpty)
+    #expect(store.filteredIgnoredItems.map(\.id) == [automatic.id])
+    #expect(store.filteredDeferredItems.map(\.id) == [manual.id])
 }
 
 @Test func uninstallSensitivityCatalogRemainsStable() async throws {
@@ -81,10 +313,14 @@ import SKMoleShared
     let supported = HomebrewDoctorIssuePath(path: "/usr/local/lib/libbroken.dylib", note: nil)
     let unsupportedExtension = HomebrewDoctorIssuePath(path: "/usr/local/lib/libbroken.a", note: nil)
     let unsupportedRoot = HomebrewDoctorIssuePath(path: "/System/Library/libbroken.dylib", note: nil)
+    let unsupportedSubdirectory = HomebrewDoctorIssuePath(path: "/usr/local/lib/nested/libbroken.dylib", note: nil)
+    let unsupportedName = HomebrewDoctorIssuePath(path: "/usr/local/lib/broken.dylib", note: nil)
 
     #expect(supported.canDelete)
     #expect(!unsupportedExtension.canDelete)
     #expect(!unsupportedRoot.canDelete)
+    #expect(!unsupportedSubdirectory.canDelete)
+    #expect(!unsupportedName.canDelete)
 }
 
 @Test func homebrewSanitizerExtractsJSONObjectEnvelope() async throws {
@@ -163,6 +399,18 @@ import SKMoleShared
     let memoryRule = try #require(MenuBarAlertRule.defaults.first(where: { $0.id == "memory-usage" }))
     #expect(memoryRule.metric == .memoryUsage)
     #expect(memoryRule.threshold == 0.75)
+}
+
+@Test func companionSettingsStoreIgnoresOversizedFiles() async throws {
+    let tempURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("json")
+    defer { try? FileManager.default.removeItem(at: tempURL) }
+
+    try String(repeating: "x", count: 600 * 1_024).write(to: tempURL, atomically: true, encoding: .utf8)
+    let store = MenuBarCompanionSettingsStore(fileURL: tempURL)
+
+    #expect(store.load() == .default)
 }
 
 @Test func menuBarMemoryPressureAlertDefaultsToHigh() async throws {

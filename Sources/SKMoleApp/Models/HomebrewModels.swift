@@ -529,15 +529,17 @@ struct HomebrewDoctorIssuePath: Hashable, Identifiable {
     }
 
     private static func supportsDeletion(_ path: String) -> Bool {
-        let lowercased = path.lowercased()
-        guard lowercased.hasSuffix(".dylib") else {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.pathExtension.lowercased() == "dylib",
+              url.lastPathComponent.hasPrefix("lib") else {
             return false
         }
 
-        let home = NSHomeDirectory().lowercased()
-        return lowercased.hasPrefix("/usr/local/lib/")
-            || lowercased.hasPrefix("/opt/homebrew/lib/")
-            || lowercased.hasPrefix("\(home)/lib/")
+        let parent = url.deletingLastPathComponent().path.lowercased()
+        let homeLib = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("lib").standardizedFileURL.path.lowercased()
+        return parent == "/usr/local/lib"
+            || parent == "/opt/homebrew/lib"
+            || parent == homeLib
     }
 }
 

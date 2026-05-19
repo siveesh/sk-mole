@@ -1,8 +1,11 @@
 import Foundation
+import SKMoleShared
 
 actor MagikaService {
     private let fileManager = FileManager.default
     private let decoder = JSONDecoder()
+    private let recursiveFileLimit = 500
+    private let chunkSize = 80
 
     static func sanitizeJSONArrayEnvelope(from output: String) -> String {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,23 +51,32 @@ actor MagikaService {
             throw MagikaError.noTargets
         }
 
-        var arguments = ["--json"]
-        if recursive {
-            arguments.append("--recursive")
-        }
-        arguments.append(contentsOf: uniqueTargets.map(\.url.path))
-
-        let result = try await runProcess(executable: executablePath, arguments: arguments)
-        guard result.terminationStatus == 0 else {
-            throw MagikaError.commandFailed(result.output)
+        let displayArguments = commandArguments(for: uniqueTargets, recursive: recursive)
+        let executionTargets = recursive ? expandedTargets(from: uniqueTargets) : uniqueTargets
+        guard !executionTargets.isEmpty else {
+            throw MagikaError.noTargets
         }
 
-        let items = try decodeItems(from: result.output)
+        var items: [MagikaScanItem] = []
+        for chunk in executionTargets.chunked(into: chunkSize) {
+            if Task.isCancelled {
+                break
+            }
+
+            let arguments = commandArguments(for: chunk, recursive: false)
+            let result = try await runProcess(executable: executablePath, arguments: arguments)
+            guard result.terminationStatus == 0 else {
+                throw MagikaError.commandFailed(result.output)
+            }
+
+            items.append(contentsOf: try decodeItems(from: result.output))
+        }
+
         return MagikaScanReport(
             status: resolvedStatus,
             targets: uniqueTargets,
             recursive: recursive,
-            command: shellCommand(executablePath: executablePath, arguments: arguments),
+            command: shellCommand(executablePath: executablePath, arguments: displayArguments),
             items: items.sorted {
                 $0.path.path.localizedCaseInsensitiveCompare($1.path.path) == .orderedAscending
             },
@@ -93,6 +105,89 @@ actor MagikaService {
 
             return $0.url.path.localizedCaseInsensitiveCompare($1.url.path) == .orderedAscending
         }
+    }
+
+    private func commandArguments(for targets: [MagikaScanTarget], recursive: Bool) -> [String] {
+        var arguments = ["--json"]
+        if recursive {
+            arguments.append("--recursive")
+        }
+        arguments.append(contentsOf: targets.map(\.url.path))
+        return arguments
+    }
+
+    private func expandedTargets(from targets: [MagikaScanTarget]) -> [MagikaScanTarget] {
+        var expanded: [MagikaScanTarget] = []
+        var seen = Set<String>()
+
+        for target in targets {
+            if Task.isCancelled || expanded.count >= recursiveFileLimit {
+                break
+            }
+
+            switch target.kind {
+            case .file:
+                appendTarget(target, to: &expanded, seen: &seen)
+            case .directory:
+                for file in files(in: target.url, limit: recursiveFileLimit - expanded.count) {
+                    appendTarget(MagikaScanTarget(url: file, kind: .file), to: &expanded, seen: &seen)
+                    if expanded.count >= recursiveFileLimit {
+                        break
+                    }
+                }
+            }
+        }
+
+        return expanded
+    }
+
+    private func appendTarget(
+        _ target: MagikaScanTarget,
+        to expanded: inout [MagikaScanTarget],
+        seen: inout Set<String>
+    ) {
+        let normalized = URLPathSafety.standardized(target.url)
+        guard seen.insert(normalized.path).inserted else {
+            return
+        }
+
+        expanded.append(MagikaScanTarget(url: normalized, kind: target.kind))
+    }
+
+    private func files(in directory: URL, limit: Int) -> [URL] {
+        guard limit > 0,
+              let enumerator = fileManager.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isPackageKey],
+                options: [.skipsHiddenFiles],
+                errorHandler: { _, _ in true }
+              ) else {
+            return []
+        }
+
+        var files: [URL] = []
+        for case let url as URL in enumerator {
+            if Task.isCancelled {
+                break
+            }
+
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isPackageKey])
+            if values?.isDirectory == true, values?.isPackage == true {
+                enumerator.skipDescendants()
+                continue
+            }
+
+            guard values?.isRegularFile == true else {
+                continue
+            }
+
+            files.append(url)
+            if files.count >= limit {
+                break
+            }
+        }
+
+        return files
     }
 
     private func decodeItems(from output: String) throws -> [MagikaScanItem] {
@@ -129,43 +224,14 @@ actor MagikaService {
     }
 
     private func runProcess(executable: String, arguments: [String]) async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                let pipe = Pipe()
-                let buffer = ProcessOutputBuffer()
-
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-                process.environment = Self.processEnvironment(for: executable)
-                process.standardOutput = pipe
-                process.standardError = pipe
-
-                do {
-                    pipe.fileHandleForReading.readabilityHandler = { handle in
-                        let chunk = handle.availableData
-                        guard !chunk.isEmpty else { return }
-                        buffer.append(chunk)
-                    }
-
-                    process.terminationHandler = { process in
-                        pipe.fileHandleForReading.readabilityHandler = nil
-                        let remainder = pipe.fileHandleForReading.readDataToEndOfFile()
-                        buffer.append(remainder)
-                        let finalData = buffer.snapshot()
-
-                        let output = String(decoding: finalData, as: UTF8.self)
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        continuation.resume(returning: ProcessResult(output: output, terminationStatus: process.terminationStatus))
-                    }
-
-                    try process.run()
-                } catch {
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
+        let result = try await ProcessRunner.run(
+            executable: executable,
+            arguments: arguments,
+            environment: Self.processEnvironment(for: executable),
+            timeout: arguments.contains("--recursive") ? 240 : 90,
+            maxOutputBytes: 16 * 1_024 * 1_024
+        )
+        return ProcessResult(output: result.output, terminationStatus: result.terminationStatus)
     }
 
     private static func processEnvironment(for executable: String) -> [String: String] {
@@ -207,22 +273,15 @@ private struct ProcessResult {
     let terminationStatus: Int32
 }
 
-private final class ProcessOutputBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else {
+            return [self]
+        }
 
-    func append(_ chunk: Data) {
-        guard !chunk.isEmpty else { return }
-        lock.lock()
-        data.append(chunk)
-        lock.unlock()
-    }
-
-    func snapshot() -> Data {
-        lock.lock()
-        let copy = data
-        lock.unlock()
-        return copy
+        return stride(from: 0, to: count, by: size).map { index in
+            Array(self[index..<Swift.min(index + size, count)])
+        }
     }
 }
 

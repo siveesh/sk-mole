@@ -1,4 +1,5 @@
 import Foundation
+import SKMoleShared
 
 actor OptimizationService {
     static let defaultActions: [OptimizeActionDescriptor] = [
@@ -41,40 +42,26 @@ actor OptimizationService {
     ]
 
     func run(_ action: OptimizeActionDescriptor) async -> OptimizationLog {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                let pipe = Pipe()
-
-                process.executableURL = URL(fileURLWithPath: action.executable)
-                process.arguments = action.arguments
-                process.standardOutput = pipe
-                process.standardError = pipe
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(decoding: data, as: UTF8.self)
-                    continuation.resume(
-                        returning: OptimizationLog(
-                            actionTitle: action.title,
-                            output: output.isEmpty ? "Completed without terminal output." : output,
-                            succeeded: process.terminationStatus == 0,
-                            timestamp: .now
-                        )
-                    )
-                } catch {
-                    continuation.resume(
-                        returning: OptimizationLog(
-                            actionTitle: action.title,
-                            output: error.localizedDescription,
-                            succeeded: false,
-                            timestamp: .now
-                        )
-                    )
-                }
-            }
+        do {
+            let result = try await ProcessRunner.run(
+                executable: action.executable,
+                arguments: action.arguments,
+                timeout: 30,
+                maxOutputBytes: 1 * 1_024 * 1_024
+            )
+            return OptimizationLog(
+                actionTitle: action.title,
+                output: result.output.isEmpty ? "Completed without terminal output." : result.output,
+                succeeded: result.terminationStatus == 0,
+                timestamp: .now
+            )
+        } catch {
+            return OptimizationLog(
+                actionTitle: action.title,
+                output: error.localizedDescription,
+                succeeded: false,
+                timestamp: .now
+            )
         }
     }
 }

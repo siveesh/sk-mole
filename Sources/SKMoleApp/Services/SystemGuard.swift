@@ -10,6 +10,11 @@ enum GuardPurpose {
     case quarantine
 }
 
+struct GuardedFileIdentity: Equatable, Sendable {
+    let volumeIdentifier: String
+    let fileIdentifier: String
+}
+
 actor SystemGuard {
     private let home = FileManager.default.homeDirectoryForCurrentUser
 
@@ -153,11 +158,7 @@ actor SystemGuard {
 
             return !components.dropLast().contains(where: { $0.lowercased().hasSuffix(".app") })
         case .developerTooling:
-            guard normalized.pathExtension.lowercased() == "dylib" else {
-                return false
-            }
-
-            return developerToolRoots.contains(where: { URLPathSafety.isDescendant(normalized, of: $0) })
+            return isSupportedDeveloperToolingPath(normalized)
         case .quarantine:
             guard normalized.pathExtension.lowercased() == "app" else {
                 return false
@@ -227,15 +228,18 @@ actor SystemGuard {
             )
         }
 
-        try validateDeletionTarget(normalized, purpose: purpose)
-
         guard FileManager.default.fileExists(atPath: normalized.path) else {
             return
         }
 
-        SKMoleLog.guardrails.info("Moving item to Trash: \(normalized.path, privacy: .public)")
+        try validateDeletionTarget(normalized, purpose: purpose)
+        let identity = try Self.fileIdentity(for: normalized)
+        try Self.validateStableTarget(normalized, expectedIdentity: identity)
+
+        SKMoleLog.guardrails.info("Moving item to Trash: \(normalized.lastPathComponent, privacy: .public)")
 
         try await MainActor.run {
+            try Self.validateStableTarget(normalized, expectedIdentity: identity)
             var trashedURL: NSURL?
             try FileManager.default.trashItem(at: normalized, resultingItemURL: &trashedURL)
         }
@@ -252,14 +256,44 @@ actor SystemGuard {
             )
         }
 
-        try validateDeletionTarget(normalized, purpose: purpose)
-
         guard FileManager.default.fileExists(atPath: normalized.path) else {
             return
         }
 
-        SKMoleLog.guardrails.info("Removing item permanently: \(normalized.path, privacy: .public)")
+        try validateDeletionTarget(normalized, purpose: purpose)
+        let identity = try Self.fileIdentity(for: normalized)
+        try Self.validateStableTarget(normalized, expectedIdentity: identity)
+
+        SKMoleLog.guardrails.info("Removing item permanently: \(normalized.lastPathComponent, privacy: .public)")
+        try Self.validateStableTarget(normalized, expectedIdentity: identity)
         try FileManager.default.removeItem(at: normalized)
+    }
+
+    func operationIdentity(for url: URL, purpose: GuardPurpose) throws -> GuardedFileIdentity {
+        let normalized = URLPathSafety.standardized(url)
+
+        guard canOperate(on: normalized, purpose: purpose) else {
+            throw NSError(
+                domain: "SKMole.SystemGuard",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Blocked action for protected or unsupported path."]
+            )
+        }
+
+        guard FileManager.default.fileExists(atPath: normalized.path) else {
+            throw NSError(
+                domain: "SKMole.SystemGuard",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "The selected item no longer exists."]
+            )
+        }
+
+        try validateDeletionTarget(normalized, purpose: purpose)
+        return try Self.fileIdentity(for: normalized)
+    }
+
+    nonisolated func validateStableOperationTarget(_ url: URL, expectedIdentity: GuardedFileIdentity) throws {
+        try Self.validateStableTarget(url, expectedIdentity: expectedIdentity)
     }
 
     private func validateDeletionTarget(_ url: URL, purpose: GuardPurpose) throws {
@@ -284,6 +318,25 @@ actor SystemGuard {
         }
     }
 
+    private nonisolated static func fileIdentity(for url: URL) throws -> GuardedFileIdentity {
+        let values = try url.resourceValues(forKeys: [.fileResourceIdentifierKey, .volumeIdentifierKey])
+        return GuardedFileIdentity(
+            volumeIdentifier: values.volumeIdentifier.map { String(describing: $0) } ?? "volume:unknown",
+            fileIdentifier: values.fileResourceIdentifier.map { String(describing: $0) } ?? "file:unknown"
+        )
+    }
+
+    private nonisolated static func validateStableTarget(_ url: URL, expectedIdentity: GuardedFileIdentity) throws {
+        let currentIdentity = try fileIdentity(for: url)
+        guard currentIdentity == expectedIdentity else {
+            throw NSError(
+                domain: "SKMole.SystemGuard",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "SK Mole stopped because the target changed during validation: \(url.path)"]
+            )
+        }
+    }
+
     private func hasSensitiveComponents(_ url: URL) -> Bool {
         let components = url.pathComponents.map { $0.lowercased() }
 
@@ -300,6 +353,25 @@ actor SystemGuard {
 
     private func isSensitiveHomePath(_ url: URL) -> Bool {
         sensitiveHomeRoots.contains(where: { URLPathSafety.isDescendant(url, of: $0) })
+    }
+
+    private func isSupportedDeveloperToolingPath(_ url: URL) -> Bool {
+        guard url.pathExtension.lowercased() == "dylib" else {
+            return false
+        }
+
+        guard developerToolRoots.contains(where: { root in
+            URLPathSafety.standardized(url.deletingLastPathComponent()).path == URLPathSafety.standardized(root).path
+        }) else {
+            return false
+        }
+
+        guard url.lastPathComponent.hasPrefix("lib") else {
+            return false
+        }
+
+        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        return values?.isRegularFile == true && values?.isSymbolicLink != true
     }
 
     private func isSupportedCleanupPath(_ url: URL) -> Bool {

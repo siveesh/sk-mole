@@ -40,6 +40,63 @@ struct SettingsView: View {
                 }
 
                 SectionCard(
+                    title: "Update Checks",
+                    subtitle: "Keep the Updates tab and menu bar companion aware of App Store, GitHub, Sparkle, vendor, and Homebrew changes without forcing always-on automation.",
+                    symbol: "arrow.triangle.2.circlepath.circle"
+                ) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Picker(
+                            "Background update checks",
+                            selection: Binding(
+                                get: { model.updateCheckInterval },
+                                set: { model.updateCheckInterval = $0 }
+                            )
+                        ) {
+                            ForEach(AppUpdateCheckInterval.allCases) { interval in
+                                Text(interval.title).tag(interval)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        HStack(spacing: 12) {
+                            Button("Scan Now") {
+                                Task { await model.refreshUpdates() }
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            if !model.ignoredUpdateItems.isEmpty || !model.deferredUpdateItems.isEmpty {
+                                Button("Reset Ignore / Defer") {
+                                    model.resetUpdateDecisions()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            Spacer()
+                        }
+
+                        Text(
+                            model.updateCheckInterval == .off
+                                ? "Automatic update checks are off. Manual scans still work exactly the same."
+                                : "SK Mole will refresh update metadata on its maintenance timer and keep the latest summary ready for the dashboard and companion."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        HStack(spacing: 16) {
+                            settingsStat(title: "Actionable", value: "\(model.activeAvailableUpdateItems.count)")
+                            settingsStat(title: "Deferred", value: "\(model.deferredUpdateItems.count)")
+                            settingsStat(title: "Ignored", value: "\(model.ignoredUpdateItems.count)")
+                        }
+
+                        if let lastScheduledUpdateCheck = model.lastScheduledUpdateCheck {
+                            Text("Last scheduled check \(lastScheduledUpdateCheck.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                SectionCard(
                     title: "Uninstall Depth",
                     subtitle: "Choose how aggressively SK Mole should look for related app leftovers before it builds an uninstall preview.",
                     symbol: "xmark.app"
@@ -435,6 +492,17 @@ struct SettingsView: View {
         }
         .frame(width: 700, height: 760)
         .background(AppPalette.canvas)
+    }
+
+    private func settingsStat(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.headline.weight(.bold))
+        }
+        .frame(minWidth: 90, alignment: .leading)
     }
 
     private func metricBinding(_ metric: MenuBarStatusMetric) -> Binding<Bool> {

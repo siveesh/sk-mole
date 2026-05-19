@@ -6,10 +6,16 @@ actor DirectorySizer {
         let sizeBytes: UInt64
         let modificationDate: Date?
         let isDirectory: Bool
+        let cachedAt: Date?
+        let resourceIdentity: String?
     }
 
     private let fileManager = FileManager.default
     private let cacheURL = SharedSupportDirectories.fileURL(named: "size-cache.json")
+    private let maxCacheEntries = 5_000
+    private let maxCacheFileBytes: UInt64 = 8 * 1_024 * 1_024
+    private let maxCacheAge: TimeInterval = 6 * 60 * 60
+    private let maxDirectChildren = 2_000
 
     private var cache: [String: SizeCacheEntry] = [:]
     private var hasLoadedCache = false
@@ -40,8 +46,11 @@ actor DirectorySizer {
         cache[key] = SizeCacheEntry(
             sizeBytes: calculated,
             modificationDate: modificationDate(for: normalized),
-            isDirectory: isDirectory(at: normalized)
+            isDirectory: isDirectory(at: normalized),
+            cachedAt: .now,
+            resourceIdentity: resourceIdentity(for: normalized)
         )
+        trimCacheIfNeeded()
         scheduleSave()
         return calculated
     }
@@ -49,7 +58,7 @@ actor DirectorySizer {
     func children(of root: URL, includeHidden: Bool = false) -> [URL] {
         let options: FileManager.DirectoryEnumerationOptions = includeHidden ? [] : [.skipsHiddenFiles]
 
-        return (try? fileManager.contentsOfDirectory(
+        guard let enumerator = fileManager.enumerator(
             at: root,
             includingPropertiesForKeys: [
                 .contentModificationDateKey,
@@ -57,8 +66,112 @@ actor DirectorySizer {
                 .isPackageKey,
                 .localizedNameKey
             ],
-            options: options
-        )) ?? []
+            options: options.union(.skipsSubdirectoryDescendants),
+            errorHandler: { _, _ in true }
+        ) else {
+            return []
+        }
+
+        var children: [URL] = []
+        for case let child as URL in enumerator {
+            children.append(child)
+            if children.count >= maxDirectChildren || Task.isCancelled {
+                break
+            }
+        }
+
+        return children
+    }
+
+    func sizedChildren(of root: URL, includeHidden: Bool = false) async -> [(url: URL, sizeBytes: UInt64)] {
+        loadCacheIfNeeded()
+
+        let normalizedRoot = URLPathSafety.standardized(root)
+        let directChildren = children(of: normalizedRoot, includeHidden: includeHidden)
+        guard !directChildren.isEmpty else {
+            return []
+        }
+
+        let resourceKeys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isPackageKey,
+            .fileAllocatedSizeKey,
+            .totalFileAllocatedSizeKey,
+            .fileSizeKey
+        ]
+        var childSizes = Dictionary(uniqueKeysWithValues: directChildren.map { (URLPathSafety.standardized($0).path, UInt64(0)) })
+        let childLookup = Set(childSizes.keys)
+
+        for child in directChildren {
+            if Task.isCancelled {
+                break
+            }
+
+            let values = try? child.resourceValues(forKeys: resourceKeys)
+            let isDirectory = values?.isDirectory == true
+            let isPackage = values?.isPackage == true
+
+            if !isDirectory {
+                childSizes[URLPathSafety.standardized(child).path] = UInt64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? values?.fileSize ?? 0)
+            } else if isPackage {
+                childSizes[URLPathSafety.standardized(child).path] = await size(of: child)
+            }
+        }
+
+        guard let enumerator = fileManager.enumerator(
+            at: normalizedRoot,
+            includingPropertiesForKeys: Array(resourceKeys),
+            options: includeHidden ? [] : [.skipsHiddenFiles],
+            errorHandler: { _, _ in true }
+        ) else {
+            return directChildren.map { ($0, childSizes[URLPathSafety.standardized($0).path] ?? 0) }
+        }
+
+        let rootPath = normalizedRoot.path
+        while let fileURL = enumerator.nextObject() as? URL {
+            if Task.isCancelled {
+                break
+            }
+
+            guard let childPath = directChildPath(for: fileURL, rootPath: rootPath),
+                  childLookup.contains(childPath),
+                  let values = try? fileURL.resourceValues(forKeys: resourceKeys) else {
+                continue
+            }
+
+            if URLPathSafety.standardized(fileURL).path == childPath {
+                if values.isDirectory == true, values.isPackage == true {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+
+            if values.isDirectory == true {
+                if values.isPackage == true {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+
+            childSizes[childPath, default: 0] += UInt64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? values.fileSize ?? 0)
+        }
+
+        for child in directChildren {
+            let normalized = URLPathSafety.standardized(child)
+            let key = normalized.path
+            let size = childSizes[key] ?? 0
+            cache[key] = SizeCacheEntry(
+                sizeBytes: size,
+                modificationDate: modificationDate(for: normalized),
+                isDirectory: isDirectory(at: normalized),
+                cachedAt: .now,
+                resourceIdentity: resourceIdentity(for: normalized)
+            )
+        }
+
+        trimCacheIfNeeded()
+        scheduleSave()
+        return directChildren.map { ($0, childSizes[URLPathSafety.standardized($0).path] ?? 0) }
     }
 
     private func calculateSize(of url: URL) -> UInt64 {
@@ -120,6 +233,25 @@ actor DirectorySizer {
         return UInt64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? values.fileSize ?? 0)
     }
 
+    private func directChildPath(for url: URL, rootPath: String) -> String? {
+        let path = URLPathSafety.standardized(url).path
+        let prefix = rootPath == "/" ? "/" : rootPath + "/"
+        guard path.hasPrefix(prefix), path != rootPath else {
+            return nil
+        }
+
+        let relative = path.dropFirst(prefix.count)
+        guard let firstComponent = relative.split(separator: "/", maxSplits: 1).first else {
+            return nil
+        }
+
+        if rootPath == "/" {
+            return "/" + String(firstComponent)
+        }
+
+        return URL(fileURLWithPath: rootPath).appendingPathComponent(String(firstComponent)).path
+    }
+
     private func loadCacheIfNeeded() {
         guard !hasLoadedCache else {
             return
@@ -127,11 +259,18 @@ actor DirectorySizer {
 
         hasLoadedCache = true
 
+        if let size = try? cacheURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           UInt64(size) > maxCacheFileBytes {
+            try? fileManager.removeItem(at: cacheURL)
+            return
+        }
+
         guard let data = try? Data(contentsOf: cacheURL) else {
             return
         }
 
         cache = (try? JSONDecoder().decode([String: SizeCacheEntry].self, from: data)) ?? [:]
+        trimCacheIfNeeded()
     }
 
     private func isCacheValid(_ entry: SizeCacheEntry, for url: URL) -> Bool {
@@ -139,7 +278,19 @@ actor DirectorySizer {
             return false
         }
 
-        return entry.modificationDate == modificationDate(for: url)
+        if let cachedAt = entry.cachedAt, Date().timeIntervalSince(cachedAt) > maxCacheAge {
+            return false
+        }
+
+        guard entry.modificationDate == modificationDate(for: url) else {
+            return false
+        }
+
+        guard let resourceIdentity = entry.resourceIdentity else {
+            return false
+        }
+
+        return resourceIdentity == self.resourceIdentity(for: url)
     }
 
     private func modificationDate(for url: URL) -> Date? {
@@ -150,8 +301,20 @@ actor DirectorySizer {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
+    private func resourceIdentity(for url: URL) -> String? {
+        guard let values = try? url.resourceValues(forKeys: [.fileResourceIdentifierKey, .volumeIdentifierKey]) else {
+            return nil
+        }
+
+        return [
+            values.volumeIdentifier.map { String(describing: $0) } ?? "volume:unknown",
+            values.fileResourceIdentifier.map { String(describing: $0) } ?? "file:unknown"
+        ].joined(separator: "|")
+    }
+
     private func scheduleSave() {
         saveTask?.cancel()
+        trimCacheIfNeeded()
         let snapshot = cache
         let destination = cacheURL
 
@@ -168,10 +331,26 @@ actor DirectorySizer {
 
     private func saveNow() {
         saveTask?.cancel()
+        trimCacheIfNeeded()
         let encoder = JSONEncoder()
 
         if let data = try? encoder.encode(cache) {
             try? data.write(to: cacheURL, options: .atomic)
         }
+    }
+
+    private func trimCacheIfNeeded() {
+        guard cache.count > maxCacheEntries else {
+            return
+        }
+
+        cache = Dictionary(
+            uniqueKeysWithValues: cache
+                .sorted { left, right in
+                    (left.value.modificationDate ?? .distantPast) > (right.value.modificationDate ?? .distantPast)
+                }
+                .prefix(maxCacheEntries)
+                .map { ($0.key, $0.value) }
+        )
     }
 }

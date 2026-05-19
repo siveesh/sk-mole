@@ -13,16 +13,20 @@ SK Mole keeps its main app process unprivileged. Admin-only work is isolated int
 - `flushDNSCache`
   - Runs `dscacheutil -flushcache`
   - Sends `HUP` to `mDNSResponder`
+- `freePurgeableSpace`
+  - Runs `tmutil thinlocalsnapshots / 10737418240 4`
 - `runPeriodicDaily`
   - Runs `periodic daily`
 
 These are intentionally conservative. The helper does not accept arbitrary commands, paths, shell fragments, or file deletion requests.
 
+The helper now also validates XPC clients before accepting a connection. Developer ID builds require the calling app to share the helper's TeamIdentifier; local ad-hoc builds still require the expected SK Mole signing identifier so unrelated tools cannot accidentally reach the daemon.
+
 ## Bundle layout
 
 The app packaging script installs the helper assets here:
 
-- `Contents/Library/LaunchServices/com.siveesh.skmole.privilegedhelper`
+- `Contents/Library/HelperTools/com.siveesh.skmole.privilegedhelper`
 - `Contents/Library/LaunchDaemons/com.siveesh.skmole.privilegedhelper.plist`
 
 ## Signing

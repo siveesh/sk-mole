@@ -4,10 +4,19 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 
 ## Recent release highlights
 
+### v1.1.3
+
+- The menu bar companion now uses a smaller status-card design with system configuration chips, compact telemetry tiles, update status, and a concise top-process table
+- SK Mole now checks its own GitHub Releases feed during update scans and can download/open the latest release DMG when an update is available
+- Monitoring updates are split into a dedicated store so high-frequency dashboard/menu-bar samples no longer invalidate the whole app model
+- Update filtering now uses a cached feature store for active, deferred, ignored, manual, and up-to-date buckets instead of recomputing those lists on every view refresh
+- Storage drill-down uses one-pass direct-child sizing for folder maps, improving responsiveness on large directory trees
+
 ### v1.1.2
 
 - Homebrew detection now re-checks installed state more reliably, tolerates noisy shell environments, and avoids collapsing the whole tab back to `not installed` when follow-up inventory calls misbehave
 - Homebrew inventory and Magika folder scans now stream large subprocess output safely, which fixes the long-running inventory hang and improves recursive folder result loading
+- Command-backed integrations now use a shared bounded process runner with timeouts, cancellation, and output caps across Homebrew, GitHub CLI, Magika, network inspection, optimization actions, diagnostics, and privileged helper tasks
 - File Intelligence resets stale filters when you add fresh targets and gives a clearer empty state when recursion or filters are hiding results
 - The menu bar companion now shares the same memory-pressure classifier as the dashboard, uses more conservative pressure thresholds, and relaunches a stale helper automatically after app updates
 - Memory Pressure and Thermal alert thresholds now use explicit level pickers in Settings instead of awkward coarse slider behavior
@@ -25,7 +34,7 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 - App uninstaller with strict/enhanced/deep remnant previews, reset flows, and Trash-app review
 - Storage explorer with multi-volume drill-down, focus filters, and large-file actions
 - Optimize center for low-risk cache, system-service, and helper-backed admin maintenance actions
-- Menu bar companion for compact monitoring and quick actions
+- Menu bar companion for compact monitoring, system configuration, top-process visibility, update awareness, and quick actions
 - Scheduled dry-run scan/report exports to `Documents/SK Mole Reports`
 
 ## Developer workflows
@@ -45,9 +54,10 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 - Cleanup, uninstall, quarantine, and developer-tool actions only operate inside curated allow-lists
 - Sensitive user paths like keychains, mail data, SSH/config material, and common shell dotfiles are explicitly blocked from destructive actions
 - Cleanup removals are intentionally constrained to reviewed locations, while app removal uses Trash-first handling for user-domain remnants
+- Destructive file actions revalidate the target identity immediately before moving or removing it, reducing the risk of path swaps between preview and action
 - Quarantine review only removes `com.apple.quarantine`; it does not spoof signatures or bypass broader Gatekeeper trust decisions
 - Process termination is limited to the current user’s non-system processes and uses a graceful terminate signal instead of a force kill
-- The app exposes only low-risk service refresh tasks directly; admin-only tasks are isolated behind a signed helper allow-list instead of arbitrary elevated shell execution
+- The app exposes only low-risk service refresh tasks directly; admin-only tasks are isolated behind a signed helper allow-list with XPC caller validation instead of arbitrary elevated shell execution
 
 ## Notes for testers
 
@@ -71,6 +81,7 @@ SK Mole is a native macOS maintenance toolkit inspired by Mole, CleanMyMac, AppC
 The helper is packaged as a launch daemon and is intentionally narrow:
 
 - `flushDNSCache`
+- `freePurgeableSpace`
 - `runPeriodicDaily`
 
 See [`docs/PRIVILEGED_HELPER.md`](docs/PRIVILEGED_HELPER.md) for the design and signing notes.

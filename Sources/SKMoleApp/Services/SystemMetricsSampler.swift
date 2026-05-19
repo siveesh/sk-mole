@@ -5,7 +5,7 @@ import IOKit.ps
 import Metal
 import SKMoleShared
 
-final class SystemMetricsSampler {
+final class SystemMetricsSampler: @unchecked Sendable {
     private struct NetworkSample {
         let incoming: UInt64
         let outgoing: UInt64
@@ -39,6 +39,7 @@ final class SystemMetricsSampler {
     private var previousNetworkSample: NetworkSample?
     private var cachedTopProcesses: [ProcessActivity] = []
     private var lastTopProcessSampleDate = Date.distantPast
+    private var samplingInterval: TimeInterval = 1
 
     private let gpuName: String
     private let gpuCoreCount: Int?
@@ -55,7 +56,7 @@ final class SystemMetricsSampler {
         stop()
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .seconds(1))
+        timer.schedule(deadline: .now(), repeating: Self.dispatchInterval(for: samplingInterval))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             handler(self.captureSnapshot())
@@ -67,6 +68,19 @@ final class SystemMetricsSampler {
     func stop() {
         timer?.cancel()
         timer = nil
+    }
+
+    func setSamplingInterval(_ interval: TimeInterval) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let clamped = max(1, min(interval, 5))
+            self.samplingInterval = clamped
+            self.timer?.schedule(deadline: .now() + clamped, repeating: Self.dispatchInterval(for: clamped))
+        }
+    }
+
+    private static func dispatchInterval(for seconds: TimeInterval) -> DispatchTimeInterval {
+        .milliseconds(Int((seconds * 1_000).rounded()))
     }
 
     private func captureSnapshot() -> SystemMetricSnapshot {
@@ -349,11 +363,14 @@ final class SystemMetricsSampler {
             )
         }
 
-        let currentCapacity = description[kIOPSCurrentCapacityKey as String] as? Double
-        let maxCapacity = description[kIOPSMaxCapacityKey as String] as? Double
-        let batteryLevel = (currentCapacity != nil && maxCapacity != nil && maxCapacity != 0)
-            ? currentCapacity! / maxCapacity!
-            : nil
+        let batteryLevel: Double?
+        if let currentCapacity = description[kIOPSCurrentCapacityKey as String] as? Double,
+           let maxCapacity = description[kIOPSMaxCapacityKey as String] as? Double,
+           maxCapacity > 0 {
+            batteryLevel = currentCapacity / maxCapacity
+        } else {
+            batteryLevel = nil
+        }
 
         let timeToEmpty = description[kIOPSTimeToEmptyKey as String] as? Int
         let timeToFull = description[kIOPSTimeToFullChargeKey as String] as? Int

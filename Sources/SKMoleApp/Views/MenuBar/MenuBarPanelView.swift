@@ -3,8 +3,14 @@ import SwiftUI
 
 struct MenuBarPanelView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var monitor: SystemMonitorStore
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+
+    init(model: AppModel) {
+        self._model = ObservedObject(wrappedValue: model)
+        self._monitor = ObservedObject(wrappedValue: model.monitorStore)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -48,15 +54,15 @@ struct MenuBarPanelView: View {
 
     private var metrics: some View {
         HStack(spacing: 10) {
-            compactMetric("CPU", "\(Int((model.metrics.cpuUsage * 100).rounded()))%", AppPalette.accent)
-            compactMetric("Memory", "\(Int((model.metrics.memoryUsage * 100).rounded()))%", AppPalette.amber)
-            compactMetric("Thermal", model.metrics.thermalState.title, AppPalette.rose)
+            compactMetric("CPU", "\(Int((monitor.metrics.cpuUsage * 100).rounded()))%", AppPalette.accent)
+            compactMetric("Memory", "\(Int((monitor.metrics.memoryUsage * 100).rounded()))%", AppPalette.amber)
+            compactMetric("Thermal", monitor.metrics.thermalState.title, AppPalette.rose)
         }
     }
 
     private var spotlight: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let powerSource = model.metrics.powerSource {
+            if let powerSource = monitor.metrics.powerSource {
                 HStack(spacing: 10) {
                     Image(systemName: powerSymbol(for: powerSource))
                         .foregroundStyle(AppPalette.sky)
@@ -65,7 +71,7 @@ struct MenuBarPanelView: View {
                 }
             }
 
-            if let topProcess = model.metrics.topProcesses.first {
+            if let topProcess = monitor.metrics.topProcesses.first {
                 HStack(spacing: 10) {
                     Image(systemName: "bolt.horizontal.circle")
                         .foregroundStyle(AppPalette.accent)

@@ -44,6 +44,10 @@ struct MoleCommands: Commands {
                 open(.homebrew)
             }
 
+            Button("Open Updates") {
+                open(.updates)
+            }
+
             Button("Open File Intelligence") {
                 open(.fileIntelligence)
             }

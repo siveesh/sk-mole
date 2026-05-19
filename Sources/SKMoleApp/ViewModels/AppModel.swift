@@ -24,10 +24,10 @@ final class AppModel: ObservableObject {
         static let scheduledMaintenanceInterval = "skmole.scheduledMaintenanceInterval"
         static let scheduledMaintenanceFormat = "skmole.scheduledMaintenanceFormat"
         static let scheduledMaintenanceLastRun = "skmole.scheduledMaintenanceLastRun"
-    }
-
-    private enum HistoryLimit {
-        static let points = 60
+        static let updateCheckInterval = "skmole.updateCheckInterval"
+        static let lastScheduledUpdateCheck = "skmole.lastScheduledUpdateCheck"
+        static let ignoredUpdateVersions = "skmole.ignoredUpdateVersions"
+        static let deferredUpdateExpirations = "skmole.deferredUpdateExpirations"
     }
 
     @Published var selection: SidebarSection = .dashboard {
@@ -62,12 +62,38 @@ final class AppModel: ObservableObject {
         }
     }
 
-    @Published var metrics: SystemMetricSnapshot = .placeholder
-    @Published var cpuHistory: [MetricHistoryPoint] = []
-    @Published var memoryHistory: [MetricHistoryPoint] = []
-    @Published var downloadHistory: [MetricHistoryPoint] = []
-    @Published var uploadHistory: [MetricHistoryPoint] = []
     @Published var recommendedActions: [RecommendedAction] = []
+    @Published var updateReport: AppUpdateReport? {
+        didSet {
+            rebuildUpdateDerivedState()
+        }
+    }
+    @Published var updateStatusSnapshot: AppUpdateStatusSnapshot?
+    @Published var updatesBusy = false
+    @Published var updatesError: String?
+    @Published var updatesProgress: ScanProgress?
+    @Published var updatesSearchQuery = "" {
+        didSet {
+            rebuildUpdateDerivedState()
+        }
+    }
+    @Published var updatesFilter: AppUpdateListFilter = .attention {
+        didSet {
+            rebuildUpdateDerivedState()
+        }
+    }
+    @Published var updatesBusyActionID: String?
+    @Published var updateLogs: [OptimizationLog] = []
+    @Published var updateCheckInterval: AppUpdateCheckInterval = .off {
+        didSet {
+            UserDefaults.standard.set(updateCheckInterval.rawValue, forKey: PreferenceKey.updateCheckInterval)
+        }
+    }
+    @Published var lastScheduledUpdateCheck: Date? {
+        didSet {
+            UserDefaults.standard.set(lastScheduledUpdateCheck, forKey: PreferenceKey.lastScheduledUpdateCheck)
+        }
+    }
     @Published var showFullDiskAccessBanner = true
     @Published var fullDiskAccessStatus: FullDiskAccessStatus = .unknown {
         didSet {
@@ -230,6 +256,16 @@ final class AppModel: ObservableObject {
     @Published var menuBarCompanionState: MenuBarCompanionState = .unavailable
     @Published var menuBarCompanionError: String?
     @Published var menuBarCompanionSettings: MenuBarCompanionSettings = .default
+    @Published private var ignoredUpdateVersions: [String: String] = [:] {
+        didSet {
+            rebuildUpdateDerivedState()
+        }
+    }
+    @Published private var deferredUpdateExpirations: [String: TimeInterval] = [:] {
+        didSet {
+            rebuildUpdateDerivedState()
+        }
+    }
 
     private let guardService = SystemGuard()
     private let sizer = DirectorySizer()
@@ -242,6 +278,8 @@ final class AppModel: ObservableObject {
     private lazy var quarantineAudit = QuarantineAuditService(guardService: guardService, sizer: sizer)
     private lazy var homebrewService = HomebrewService()
     private lazy var gitHubCLIService = GitHubCLIService()
+    private let updateService = AppUpdateService()
+    private let updateStatusStore = AppUpdateStatusStore()
     private let magikaService = MagikaService()
     private let startupItemsService = StartupItemsService()
     private let optimizer = OptimizationService()
@@ -253,8 +291,12 @@ final class AppModel: ObservableObject {
     private lazy var exportRegistry = MaintenanceExportRegistry()
     private var notificationObservers: [NSObjectProtocol] = []
 
+    let monitorStore = SystemMonitorStore()
+    let updatesStore = UpdatesFeatureStore()
+
     private var hasLoadedCleanup = false
     private var hasLoadedApplications = false
+    private var hasLoadedUpdates = false
     private var hasLoadedOrphanedFiles = false
     private var hasLoadedStorage = false
     private var hasLoadedNetwork = false
@@ -269,6 +311,7 @@ final class AppModel: ObservableObject {
 
     private var cleanupRequestID = UUID()
     private var applicationsRequestID = UUID()
+    private var updatesRequestID = UUID()
     private var orphanedFilesRequestID = UUID()
     private var storageRequestID = UUID()
     private var networkRequestID = UUID()
@@ -282,6 +325,7 @@ final class AppModel: ObservableObject {
 
     private var cleanupTask: Task<[CleanupCategorySummary], Never>?
     private var applicationsTask: Task<[InstalledApp], Never>?
+    private var updatesTask: Task<AppUpdateReport, Never>?
     private var orphanedFilesTask: Task<[OrphanedFileCandidate], Never>?
     private var storageTask: Task<StorageReport, Never>?
     private var networkTask: Task<NetworkInspectorReport, Never>?
@@ -294,12 +338,17 @@ final class AppModel: ObservableObject {
     private var startupItemsTask: Task<[StartupItem], Never>?
     private var homebrewSelectedReference: HomebrewPackageReference?
     private var scheduledMaintenanceTask: Task<Void, Never>?
+    private var lastMetricDrivenRecommendationRefresh = Date.distantPast
 
     let optimizeActions = OptimizationService.defaultActions
     let privilegedMaintenanceTasks = PrivilegedMaintenanceTask.allCases
 
     var storageVolumes: [StorageVolume] {
         storageReport?.volumes ?? []
+    }
+
+    var metrics: SystemMetricSnapshot {
+        monitorStore.metrics
     }
 
     var selectedStorageVolume: StorageVolume? {
@@ -435,8 +484,53 @@ final class AppModel: ObservableObject {
         }
     }
 
+    var filteredUpdateItems: [AppUpdateItem] {
+        updatesStore.filteredItems
+    }
+
+    var activeAvailableUpdateItems: [AppUpdateItem] {
+        updatesStore.activeAvailableItems
+    }
+
+    var deferredUpdateItems: [AppUpdateItem] {
+        updatesStore.deferredItems
+    }
+
+    var ignoredUpdateItems: [AppUpdateItem] {
+        updatesStore.ignoredItems
+    }
+
+    var filteredAvailableUpdateItems: [AppUpdateItem] {
+        updatesStore.filteredAvailableItems
+    }
+
+    var filteredManualUpdateItems: [AppUpdateItem] {
+        updatesStore.filteredManualItems
+    }
+
+    var filteredUnsupportedUpdateItems: [AppUpdateItem] {
+        updatesStore.filteredUnsupportedItems
+    }
+
+    var filteredUpToDateUpdateItems: [AppUpdateItem] {
+        updatesStore.filteredUpToDateItems
+    }
+
+    var filteredDeferredUpdateItems: [AppUpdateItem] {
+        updatesStore.filteredDeferredItems
+    }
+
+    var filteredIgnoredUpdateItems: [AppUpdateItem] {
+        updatesStore.filteredIgnoredItems
+    }
+
+    var selfUpdateItem: AppUpdateItem? {
+        updateReport?.items.first { $0.id == AppUpdateService.selfUpdateItemID }
+    }
+
     var recommendedHomebrewPackages: [HomebrewPackageSearchResult] {
         let installedReferences = Set(homebrewInventory?.installedPackages.map(\.reference) ?? [])
+        let installedAppNames = Set(applications.map { $0.name.lowercased() })
 
         return HomebrewPackageSearchResult.featured.filter { result in
             if installedReferences.contains(result.reference) {
@@ -452,7 +546,7 @@ final class AppModel: ObservableObject {
                 return false
             }
 
-            if applications.contains(where: { $0.name.localizedCaseInsensitiveCompare(result.displayName) == .orderedSame }) {
+            if installedAppNames.contains(result.displayName.lowercased()) {
                 return false
             }
 
@@ -570,6 +664,7 @@ final class AppModel: ObservableObject {
     var quickActions: [MaintenanceQuickAction] {
         [
             MaintenanceQuickAction(id: "refresh-all", title: "Refresh All", subtitle: "Reload cleanup, uninstall, and storage data", icon: "arrow.clockwise"),
+            MaintenanceQuickAction(id: "updates", title: "Check Updates", subtitle: "Scan App Store, vendor, Homebrew, and GitHub sources", icon: "arrow.triangle.2.circlepath.circle"),
             MaintenanceQuickAction(id: "smart-care-report", title: "Export Dry Run", subtitle: "Save a maintenance report to disk", icon: "square.and.arrow.up"),
             MaintenanceQuickAction(id: "orphan-review", title: "Orphan Review", subtitle: "Inspect leftover app support files", icon: "questionmark.folder"),
             MaintenanceQuickAction(id: "file-intelligence", title: "File Intelligence", subtitle: "Classify files by content with Magika when available", icon: "doc.text.viewfinder"),
@@ -606,7 +701,14 @@ final class AppModel: ObservableObject {
         self.scheduledMaintenanceInterval = defaults.string(forKey: PreferenceKey.scheduledMaintenanceInterval).flatMap(ScheduledMaintenanceInterval.init(rawValue:)) ?? .off
         self.scheduledMaintenanceExportFormat = defaults.string(forKey: PreferenceKey.scheduledMaintenanceFormat).flatMap(ScheduledMaintenanceExportFormat.init(rawValue:)) ?? .markdown
         self.lastScheduledMaintenanceRun = defaults.object(forKey: PreferenceKey.scheduledMaintenanceLastRun) as? Date
+        self.updateCheckInterval = defaults.string(forKey: PreferenceKey.updateCheckInterval).flatMap(AppUpdateCheckInterval.init(rawValue:)) ?? .off
+        self.lastScheduledUpdateCheck = defaults.object(forKey: PreferenceKey.lastScheduledUpdateCheck) as? Date
         self.menuBarCompanionSettings = companionSettingsStore.load()
+        self.ignoredUpdateVersions = defaults.dictionary(forKey: PreferenceKey.ignoredUpdateVersions) as? [String: String] ?? [:]
+        self.deferredUpdateExpirations = defaults.dictionary(forKey: PreferenceKey.deferredUpdateExpirations) as? [String: TimeInterval] ?? [:]
+        self.updateStatusSnapshot = updateStatusStore.load()
+        pruneExpiredUpdateDeferrals()
+        rebuildUpdateDerivedState()
 
         updateFullDiskAccessBannerVisibility()
         refreshFullDiskAccessStatus()
@@ -618,6 +720,7 @@ final class AppModel: ObservableObject {
                 self?.record(snapshot: snapshot)
             }
         }
+        updateMetricsSamplingInterval()
 
         startScheduledMaintenanceLoop()
     }
@@ -627,6 +730,7 @@ final class AppModel: ObservableObject {
         syncMenuBarCompanion(launchIfEnabled: menuBarCompanionEnabled)
         refreshFullDiskAccessStatus()
         await runScheduledMaintenanceIfNeeded(reason: "window-open")
+        await runScheduledUpdateCheckIfNeeded(reason: "window-open")
     }
 
     func completeOnboarding() {
@@ -665,6 +769,11 @@ final class AppModel: ObservableObject {
     func open(section: SidebarSection) {
         SKMoleLog.sidebar.info("Opening section: \(section.rawValue, privacy: .public)")
         selection = section
+        updateMetricsSamplingInterval()
+    }
+
+    private func updateMetricsSamplingInterval() {
+        metricsSampler.setSamplingInterval(selection == .dashboard ? 1 : 3)
     }
 
     func refreshCurrentSelection() async {
@@ -1066,6 +1175,12 @@ final class AppModel: ObservableObject {
             if hasLoadedProcesses {
                 await loadProcesses(force: true)
             }
+            if hasLoadedUpdates {
+                await loadUpdates(force: true)
+            }
+        case "updates":
+            open(section: .updates)
+            await loadData(for: .updates, force: true)
         case "smart-care-report":
             await exportDryRunReport()
         case "orphan-review":
@@ -1114,6 +1229,253 @@ final class AppModel: ObservableObject {
 
     func refreshProcesses() async {
         await loadProcesses(force: true)
+    }
+
+    func refreshUpdates() async {
+        await loadData(for: .updates, force: true)
+    }
+
+    func installUpdate(_ item: AppUpdateItem) async {
+        if item.id == AppUpdateService.selfUpdateItemID {
+            await installSelfUpdate(item)
+            return
+        }
+
+        updatesBusyActionID = item.id
+        updatesError = nil
+
+        let log: OptimizationLog
+        switch item.sourceKind {
+        case .homebrew:
+            guard let reference = item.homebrewReference else {
+                updatesError = "SK Mole could not resolve the Homebrew package backing this update."
+                updatesBusyActionID = nil
+                return
+            }
+
+            log = await homebrewService.run(
+                arguments: upgradeArguments(for: reference),
+                actionTitle: "Upgrade \(item.displayName)"
+            )
+            homebrewLogs.insert(log, at: 0)
+        case .appStore:
+            guard let adamID = item.appStoreAdamID else {
+                updatesError = "SK Mole could not resolve the App Store identifier needed for this update."
+                updatesBusyActionID = nil
+                return
+            }
+
+            log = await updateService.runMacAppStoreUpdate(
+                arguments: ["upgrade", String(adamID)],
+                actionTitle: "Upgrade \(item.displayName)"
+            )
+        case .sparkle, .github, .vendor, .unknown:
+            updatesBusyActionID = nil
+            openPrimarySource(for: item)
+            return
+        }
+
+        updateLogs.insert(log, at: 0)
+        if log.succeeded {
+            await loadHomebrew(force: true)
+            await loadUpdates(force: true)
+        } else {
+            updatesError = log.output
+        }
+
+        updatesBusyActionID = nil
+    }
+
+    private func installSelfUpdate(_ item: AppUpdateItem) async {
+        updatesBusyActionID = item.id
+        updatesError = nil
+
+        guard let downloadURL = item.primaryURL else {
+            updatesBusyActionID = nil
+            openPrimarySource(for: item)
+            return
+        }
+
+        let result = await updateService.downloadSelfUpdateInstaller(
+            from: downloadURL,
+            latestVersion: item.latestVersion
+        )
+        updateLogs.insert(result.log, at: 0)
+
+        if result.log.succeeded, let installerURL = result.installerURL {
+            NSWorkspace.shared.open(installerURL)
+        } else {
+            updatesError = result.log.output
+        }
+
+        updatesBusyActionID = nil
+    }
+
+    func installAllAutomaticUpdates() async {
+        guard let updateReport else {
+            await refreshUpdates()
+            return
+        }
+
+        updatesBusyActionID = "install-all-updates"
+        updatesError = nil
+
+        var logs: [OptimizationLog] = []
+
+        if updateReport.automaticItems.contains(where: { $0.sourceKind == .homebrew }) {
+            let log = await homebrewService.run(arguments: ["upgrade"], actionTitle: "Upgrade All Homebrew Packages")
+            homebrewLogs.insert(log, at: 0)
+            logs.append(log)
+        }
+
+        if updateReport.automaticItems.contains(where: { $0.sourceKind == .appStore }) {
+            let log = await updateService.runMacAppStoreUpdate(arguments: ["upgrade"], actionTitle: "Upgrade App Store Apps")
+            logs.append(log)
+        }
+
+        if logs.isEmpty {
+            updatesError = "No automatic update actions are available right now."
+            updatesBusyActionID = nil
+            return
+        }
+
+        updateLogs.insert(contentsOf: logs.reversed(), at: 0)
+        if let failed = logs.first(where: { !$0.succeeded }) {
+            updatesError = failed.output
+        } else {
+            await loadHomebrew(force: true)
+            await loadUpdates(force: true)
+        }
+
+        updatesBusyActionID = nil
+    }
+
+    func installMASFromUpdates() async {
+        guard homebrewStatus.isInstalled else {
+            updatesError = "Install Homebrew first, then SK Mole can install `mas` for App Store automation."
+            selection = .homebrew
+            return
+        }
+
+        updatesBusyActionID = "install-mas"
+        updatesError = nil
+
+        let log = await homebrewService.run(arguments: ["install", "mas"], actionTitle: "Install mas")
+        homebrewLogs.insert(log, at: 0)
+        updateLogs.insert(log, at: 0)
+
+        if log.succeeded {
+            await loadHomebrew(force: true)
+            await loadUpdates(force: true)
+        } else {
+            updatesError = log.output
+        }
+
+        updatesBusyActionID = nil
+    }
+
+    func openPrimarySource(for item: AppUpdateItem) {
+        if let primaryURL = item.primaryURL {
+            NSWorkspace.shared.open(primaryURL)
+            return
+        }
+
+        if let appURL = item.appURL {
+            NSWorkspace.shared.open(appURL)
+        }
+    }
+
+    func openSecondarySource(for item: AppUpdateItem) {
+        if let secondaryURL = item.secondaryURL {
+            NSWorkspace.shared.open(secondaryURL)
+            return
+        }
+
+        if let homepageURL = item.homepageURL {
+            NSWorkspace.shared.open(homepageURL)
+        }
+    }
+
+    func openReleaseNotes(for item: AppUpdateItem) {
+        if let releaseNotesURL = item.releaseNotesURL {
+            NSWorkspace.shared.open(releaseNotesURL)
+            return
+        }
+
+        openPrimarySource(for: item)
+    }
+
+    func openFullReleaseHistory(for item: AppUpdateItem) {
+        if let fullReleaseNotesURL = item.fullReleaseNotesURL {
+            NSWorkspace.shared.open(fullReleaseNotesURL)
+            return
+        }
+
+        openSecondarySource(for: item)
+    }
+
+    func ignoreUpdate(_ item: AppUpdateItem) {
+        guard let version = item.normalizedLatestVersion else {
+            updatesError = "SK Mole could not resolve the version to ignore for \(item.displayName)."
+            return
+        }
+
+        ignoredUpdateVersions[updateDecisionKey(for: item)] = version
+        deferredUpdateExpirations.removeValue(forKey: updateDecisionKey(for: item))
+        persistUpdateDecisionState()
+        persistUpdateStatusSnapshot()
+        updateRecommendedActions()
+    }
+
+    func stopIgnoringUpdate(_ item: AppUpdateItem) {
+        ignoredUpdateVersions.removeValue(forKey: updateDecisionKey(for: item))
+        persistUpdateDecisionState()
+        persistUpdateStatusSnapshot()
+        updateRecommendedActions()
+    }
+
+    func deferUpdate(_ item: AppUpdateItem, by duration: TimeInterval) {
+        let until = Date().addingTimeInterval(duration)
+        deferredUpdateExpirations[updateDecisionKey(for: item)] = until.timeIntervalSinceReferenceDate
+        ignoredUpdateVersions.removeValue(forKey: updateDecisionKey(for: item))
+        persistUpdateDecisionState()
+        persistUpdateStatusSnapshot()
+        updateRecommendedActions()
+    }
+
+    func clearUpdateDeferral(_ item: AppUpdateItem) {
+        deferredUpdateExpirations.removeValue(forKey: updateDecisionKey(for: item))
+        persistUpdateDecisionState()
+        persistUpdateStatusSnapshot()
+        updateRecommendedActions()
+    }
+
+    func resetUpdateDecisions() {
+        ignoredUpdateVersions = [:]
+        deferredUpdateExpirations = [:]
+        persistUpdateDecisionState()
+        persistUpdateStatusSnapshot()
+        updateRecommendedActions()
+    }
+
+    func updateDecisionSummary(for item: AppUpdateItem) -> String? {
+        if let deferredUntil = updateDeferralDate(for: item) {
+            return "Deferred until \(deferredUntil.formatted(date: .abbreviated, time: .shortened))"
+        }
+
+        if isUpdateIgnored(item), let version = item.normalizedLatestVersion {
+            return "Ignoring version \(version)"
+        }
+
+        return nil
+    }
+
+    func revealInstalledUpdateItem(_ item: AppUpdateItem) {
+        guard let appURL = item.appURL else {
+            return
+        }
+
+        reveal(appURL)
     }
 
     func terminateProcess(_ process: NativeProcessActivity) async {
@@ -1856,6 +2218,10 @@ final class AppModel: ObservableObject {
         if hasLoadedStartupItems {
             await loadStartupItems(force: true)
         }
+
+        if hasLoadedUpdates {
+            await loadUpdates(force: true)
+        }
     }
 
     func exportDryRunReport() async {
@@ -1920,6 +2286,7 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(900))
                 await self?.runScheduledMaintenanceIfNeeded(reason: "timer")
+                await self?.runScheduledUpdateCheckIfNeeded(reason: "timer")
             }
         }
     }
@@ -1984,6 +2351,60 @@ final class AppModel: ObservableObject {
             )
             SKMoleLog.maintenance.error("Scheduled maintenance failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func runScheduledUpdateCheckIfNeeded(reason: String) async {
+        guard let spacing = updateCheckInterval.minimumSpacing else {
+            return
+        }
+
+        if let lastScheduledUpdateCheck,
+           Date().timeIntervalSince(lastScheduledUpdateCheck) < spacing {
+            return
+        }
+
+        await performScheduledUpdateCheck(reason: reason)
+    }
+
+    private func performScheduledUpdateCheck(reason: String) async {
+        SKMoleLog.maintenance.info("Running scheduled update check (\(reason, privacy: .public))")
+
+        async let refreshApplications: Void = loadApplications(force: true)
+        async let refreshHomebrew: Void = loadHomebrew(force: true)
+        _ = await (refreshApplications, refreshHomebrew)
+        await loadUpdates(force: true)
+        lastScheduledUpdateCheck = .now
+
+        if let updatesError, !updatesError.isEmpty {
+            optimizationLogs.insert(
+                OptimizationLog(
+                    actionTitle: "Scheduled Update Check",
+                    output: updatesError,
+                    succeeded: false,
+                    timestamp: .now
+                ),
+                at: 0
+            )
+            return
+        }
+
+        let availableCount = activeAvailableUpdateItems.count
+        let output: String
+        if availableCount == 0 {
+            output = "Scheduled update check finished without any actionable updates."
+        } else {
+            output = "Scheduled update check found \(availableCount) actionable update\(availableCount == 1 ? "" : "s")."
+        }
+
+        optimizationLogs.insert(
+            OptimizationLog(
+                actionTitle: "Scheduled Update Check",
+                output: output,
+                succeeded: true,
+                timestamp: .now
+            ),
+            at: 0
+        )
     }
 
     private func scheduledMaintenanceDestination(for descriptor: MaintenanceExportPluginDescriptor) throws -> URL {
@@ -2066,6 +2487,13 @@ final class AppModel: ObservableObject {
             if force || !hasLoadedStorage {
                 await loadStorage(force: true)
             }
+        case .updates:
+            let shouldRefreshApplications = force || !hasLoadedApplications
+            let shouldRefreshHomebrew = force || !hasLoadedHomebrew || !homebrewStatus.isInstalled
+            async let refreshApplications: Void = loadApplications(force: shouldRefreshApplications)
+            async let refreshHomebrew: Void = loadHomebrew(force: shouldRefreshHomebrew)
+            _ = await (refreshApplications, refreshHomebrew)
+            await loadUpdates(force: force || !hasLoadedUpdates)
         case .fileIntelligence:
             await loadMagika(force: force || !hasLoadedMagika)
         case .homebrew:
@@ -2218,6 +2646,80 @@ final class AppModel: ObservableObject {
             }
         }
 
+        updateRecommendedActions()
+    }
+
+    private func loadUpdates(force: Bool) async {
+        if !force {
+            guard !hasLoadedUpdates else {
+                return
+            }
+
+            guard updatesTask == nil else {
+                return
+            }
+        }
+
+        if !hasLoadedApplications || applications.isEmpty {
+            await loadApplications(force: true)
+        }
+
+        if !hasLoadedHomebrew && homebrewInventory == nil {
+            await loadHomebrew(force: true)
+        }
+
+        updatesTask?.cancel()
+        let requestID = UUID()
+        updatesRequestID = requestID
+
+        updatesBusy = true
+        updatesError = nil
+        updatesProgress = ScanProgress(
+            title: "Update scan",
+            detail: "Preparing update scan",
+            completedUnits: 0,
+            totalUnits: 1
+        )
+        SKMoleLog.maintenance.info("Starting application update scan")
+
+        let applications = self.applications
+        let inventory = homebrewInventory
+        let service = updateService
+        let task = Task<AppUpdateReport, Never> { [requestID] in
+            do {
+                return try await service.scan(applications: applications, homebrewInventory: inventory) { progress in
+                    await MainActor.run {
+                        guard self.updatesRequestID == requestID else { return }
+                        self.updatesProgress = progress
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    guard self.updatesRequestID == requestID else { return }
+                    self.updatesError = error.localizedDescription
+                }
+
+                return AppUpdateReport(
+                    scannedAt: .now,
+                    appStoreAutomation: AppStoreAutomationStatus(executablePath: nil, version: nil, accountName: nil, accountDetail: nil),
+                    scannedApplicationCount: 0,
+                    scannedPackageCount: inventory?.installedPackages.count ?? 0,
+                    items: []
+                )
+            }
+        }
+        updatesTask = task
+
+        let report = await task.value
+        guard updatesRequestID == requestID else { return }
+
+        updateReport = report
+        updatesBusy = false
+        updatesProgress = nil
+        updatesTask = nil
+        hasLoadedUpdates = true
+        persistUpdateStatusSnapshot()
+        SKMoleLog.maintenance.info("Finished application update scan with \(report.availableItems.count, privacy: .public) available updates")
         updateRecommendedActions()
     }
 
@@ -2861,9 +3363,7 @@ final class AppModel: ObservableObject {
 
     private func helperDiagnosticMessage(for error: Error) async -> String {
         let helper = privilegedHelper
-        let diagnostics = await Task.detached(priority: .utility) {
-            helper.diagnosticSummary()
-        }.value
+        let diagnostics = await helper.diagnosticSummary()
 
         return [error.localizedDescription, diagnostics]
             .compactMap { value in
@@ -2875,23 +3375,77 @@ final class AppModel: ObservableObject {
     }
 
     private func record(snapshot: SystemMetricSnapshot) {
-        metrics = snapshot
-        cpuHistory = appendHistory(cpuHistory, value: snapshot.cpuUsage, date: snapshot.timestamp)
-        memoryHistory = appendHistory(memoryHistory, value: snapshot.memoryUsage, date: snapshot.timestamp)
-        downloadHistory = appendHistory(downloadHistory, value: Double(snapshot.networkDownloadRate), date: snapshot.timestamp)
-        uploadHistory = appendHistory(uploadHistory, value: Double(snapshot.networkUploadRate), date: snapshot.timestamp)
-        updateRecommendedActions()
+        monitorStore.record(snapshot: snapshot)
+
+        if snapshot.timestamp.timeIntervalSince(lastMetricDrivenRecommendationRefresh) >= 10 {
+            lastMetricDrivenRecommendationRefresh = snapshot.timestamp
+            updateRecommendedActions()
+        }
     }
 
-    private func appendHistory(_ points: [MetricHistoryPoint], value: Double, date: Date) -> [MetricHistoryPoint] {
-        var updated = points
-        updated.append(MetricHistoryPoint(timestamp: date, value: value))
+    private func updateDecisionKey(for item: AppUpdateItem) -> String {
+        UpdatesFeatureStore.decisionKey(for: item)
+    }
 
-        if updated.count > HistoryLimit.points {
-            updated.removeFirst(updated.count - HistoryLimit.points)
+    private func rebuildUpdateDerivedState() {
+        updatesStore.rebuild(
+            report: updateReport,
+            searchQuery: updatesSearchQuery,
+            filter: updatesFilter,
+            ignoredVersions: ignoredUpdateVersions,
+            deferredExpirations: deferredUpdateExpirations
+        )
+    }
+
+    private func updateDeferralDate(for item: AppUpdateItem) -> Date? {
+        UpdatesFeatureStore.deferralDate(for: item, deferredExpirations: deferredUpdateExpirations)
+    }
+
+    private func isUpdateIgnored(_ item: AppUpdateItem) -> Bool {
+        UpdatesFeatureStore.isIgnored(item, ignoredVersions: ignoredUpdateVersions)
+    }
+
+    private func isUpdateDeferred(_ item: AppUpdateItem) -> Bool {
+        UpdatesFeatureStore.isDeferred(item, deferredExpirations: deferredUpdateExpirations)
+    }
+
+    private func pruneExpiredUpdateDeferrals() {
+        let active = deferredUpdateExpirations.filter { Date(timeIntervalSinceReferenceDate: $0.value) > .now }
+        guard active.count != deferredUpdateExpirations.count else {
+            return
         }
 
-        return updated
+        deferredUpdateExpirations = active
+        UserDefaults.standard.set(active, forKey: PreferenceKey.deferredUpdateExpirations)
+    }
+
+    private func persistUpdateDecisionState() {
+        pruneExpiredUpdateDeferrals()
+        UserDefaults.standard.set(ignoredUpdateVersions, forKey: PreferenceKey.ignoredUpdateVersions)
+        UserDefaults.standard.set(deferredUpdateExpirations, forKey: PreferenceKey.deferredUpdateExpirations)
+    }
+
+    private func persistUpdateStatusSnapshot() {
+        guard let updateReport else {
+            updateStatusSnapshot = nil
+            return
+        }
+
+        let snapshot = AppUpdateStatusSnapshot(
+            scannedAt: updateReport.scannedAt,
+            availableCount: updateReport.availableItems.count,
+            automaticCount: updateReport.automaticItems.count,
+            manualCount: updateReport.manualItems.count,
+            ignoredCount: ignoredUpdateItems.count,
+            deferredCount: deferredUpdateItems.count
+        )
+        updateStatusSnapshot = snapshot
+
+        do {
+            try updateStatusStore.save(snapshot)
+        } catch {
+            SKMoleLog.maintenance.error("Failed to save update status snapshot: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func updateFullDiskAccessBannerVisibility() {
@@ -3280,6 +3834,33 @@ final class AppModel: ObservableObject {
                     priority: .recommended,
                     callToAction: "Open Processes",
                     intent: .openSection(.processes)
+                )
+            )
+        }
+
+        if !activeAvailableUpdateItems.isEmpty {
+            let automaticCount = activeAvailableUpdateItems.filter(\.canAutoInstall).count
+            let detail: String
+            let callToAction: String
+
+            if automaticCount > 0 {
+                detail = "SK Mole found \(activeAvailableUpdateItems.count) available update\(activeAvailableUpdateItems.count == 1 ? "" : "s"), and \(automaticCount) of them can be installed directly from the Updates tab."
+                callToAction = "Open Updates"
+            } else {
+                detail = "SK Mole found \(activeAvailableUpdateItems.count) available update\(activeAvailableUpdateItems.count == 1 ? "" : "s"), but these sources still need a manual visit or vendor-controlled installer."
+                callToAction = "Review Updates"
+            }
+
+            actions.append(
+                RecommendedAction(
+                    id: "app-updates-review",
+                    title: "Review application updates",
+                    subtitle: "\(activeAvailableUpdateItems.count) update\(activeAvailableUpdateItems.count == 1 ? "" : "s") available",
+                    detail: detail,
+                    icon: "arrow.triangle.2.circlepath.circle",
+                    priority: automaticCount > 0 ? .recommended : .optional,
+                    callToAction: callToAction,
+                    intent: .openSection(.updates)
                 )
             )
         }

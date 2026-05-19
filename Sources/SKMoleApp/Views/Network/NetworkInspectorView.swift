@@ -2,7 +2,13 @@ import SwiftUI
 
 struct NetworkInspectorView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var monitor: SystemMonitorStore
     @State private var selectedMode: NetworkInspectorMode = .processes
+
+    init(model: AppModel) {
+        self._model = ObservedObject(wrappedValue: model)
+        self._monitor = ObservedObject(wrappedValue: model.monitorStore)
+    }
 
     var body: some View {
         ScrollView {
@@ -25,7 +31,7 @@ struct NetworkInspectorView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(ByteFormatting.formatRate(model.metrics.networkDownloadRate))
+                        Text(ByteFormatting.formatRate(monitor.metrics.networkDownloadRate))
                             .font(.system(size: 30, weight: .bold, design: .rounded))
                         Text("current download rate")
                             .foregroundStyle(.secondary)
@@ -34,7 +40,7 @@ struct NetworkInspectorView: View {
                     Spacer()
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(ByteFormatting.formatRate(model.metrics.networkUploadRate))
+                        Text(ByteFormatting.formatRate(monitor.metrics.networkUploadRate))
                             .font(.system(size: 30, weight: .bold, design: .rounded))
                         Text("current upload rate")
                             .foregroundStyle(.secondary)

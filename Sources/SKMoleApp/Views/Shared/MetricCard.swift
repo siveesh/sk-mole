@@ -9,12 +9,12 @@ struct MetricCard: View {
     let progress: Double?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Image(systemName: symbol)
-                    .font(.headline.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(tint)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 32, height: 32)
                     .background(Circle().fill(tint.opacity(0.12)))
 
                 Spacer()
@@ -25,10 +25,12 @@ struct MetricCard: View {
             }
 
             Text(value)
-                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
 
             Text(detail)
-                .font(.subheadline)
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -38,10 +40,10 @@ struct MetricCard: View {
             if let progress {
                 ProgressView(value: progress)
                     .tint(tint)
-                    .controlSize(.large)
+                    .controlSize(.regular)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 198, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
         .moleCardStyle()
     }
 }

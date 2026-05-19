@@ -261,6 +261,7 @@ public final class MenuBarCompanionSettingsStore {
     private let fileURL: URL
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    private let maximumSettingsFileBytes = 512 * 1_024
 
     public init(fileURL: URL = SharedSupportDirectories.fileURL(named: "companion-settings.json")) {
         self.fileURL = fileURL
@@ -268,6 +269,11 @@ public final class MenuBarCompanionSettingsStore {
     }
 
     public func load() -> MenuBarCompanionSettings {
+        if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > maximumSettingsFileBytes {
+            return .default
+        }
+
         guard let data = try? Data(contentsOf: fileURL) else {
             return .default
         }

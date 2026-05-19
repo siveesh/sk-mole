@@ -1,4 +1,5 @@
 import Foundation
+import SKMoleShared
 
 actor GitHubCLIService {
     private let fileManager = FileManager.default
@@ -138,29 +139,14 @@ actor GitHubCLIService {
     }
 
     private func runProcess(executable: String, arguments: [String]) async throws -> GitHubCLIProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                let pipe = Pipe()
-
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-                process.environment = Self.processEnvironment(for: executable)
-                process.standardOutput = pipe
-                process.standardError = pipe
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(decoding: data, as: UTF8.self)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    continuation.resume(returning: GitHubCLIProcessResult(output: output, terminationStatus: process.terminationStatus))
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
+        let result = try await ProcessRunner.run(
+            executable: executable,
+            arguments: arguments,
+            environment: Self.processEnvironment(for: executable),
+            timeout: arguments.contains("repo") ? 90 : 45,
+            maxOutputBytes: 6 * 1_024 * 1_024
+        )
+        return GitHubCLIProcessResult(output: result.output, terminationStatus: result.terminationStatus)
     }
 
     private static func processEnvironment(for executable: String) -> [String: String] {

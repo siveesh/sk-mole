@@ -228,18 +228,20 @@ actor StorageAnalyzer {
                 continue
             }
 
-            let directChildren = await sizer.children(of: root, includeHidden: includeHidden)
+            let directChildren = await sizer.sizedChildren(of: root, includeHidden: includeHidden)
 
-            for child in directChildren {
+            for sizedChild in directChildren {
                 if Task.isCancelled {
                     return children
                 }
+
+                let child = sizedChild.url
 
                 guard await guardService.canOperate(on: child, purpose: .analyze) else {
                     continue
                 }
 
-                let size = await sizer.size(of: child)
+                let size = sizedChild.sizeBytes
                 guard size > 0 else {
                     continue
                 }
@@ -727,9 +729,7 @@ actor StorageAnalyzer {
                 continue
             }
 
-            let urls = enumerator.compactMap { $0 as? URL }
-
-            for url in urls {
+            while let url = enumerator.nextObject() as? URL {
                 if Task.isCancelled {
                     return matches
                 }
@@ -762,6 +762,10 @@ actor StorageAnalyzer {
                         modifiedAt: values.contentModificationDate
                     )
                 )
+
+                if matches.count > 96 {
+                    matches = Array(matches.sorted { $0.sizeBytes > $1.sizeBytes }.prefix(24))
+                }
             }
         }
 

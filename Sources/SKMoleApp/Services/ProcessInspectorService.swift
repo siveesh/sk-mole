@@ -23,7 +23,25 @@ actor ProcessInspectorService {
             )
         }
 
-        guard kill(process.pid, SIGTERM) == 0 else {
+        guard let liveProcess = sampler.sampleProcesses().first(where: { $0.pid == process.pid }) else {
+            return ProcessTerminationResult(
+                pid: process.pid,
+                processName: process.name,
+                detail: "\(process.name) already exited before SK Mole sent a signal.",
+                succeeded: false
+            )
+        }
+
+        guard matchesSelectedProcess(liveProcess, selected: process),
+              await guardService.canTerminate(process: liveProcess) else {
+            throw NSError(
+                domain: "SKMole.Processes",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "SK Mole stopped because that PID now belongs to a different or protected process."]
+            )
+        }
+
+        guard kill(liveProcess.pid, SIGTERM) == 0 else {
             let description = String(cString: strerror(errno))
             throw NSError(
                 domain: "SKMole.Processes",
@@ -32,13 +50,19 @@ actor ProcessInspectorService {
             )
         }
 
-        SKMoleLog.processes.info("Sent SIGTERM to PID \(process.pid, privacy: .public) (\(process.name, privacy: .public))")
+        SKMoleLog.processes.info("Sent SIGTERM to PID \(liveProcess.pid, privacy: .public) (\(liveProcess.name, privacy: .public))")
 
         return ProcessTerminationResult(
-            pid: process.pid,
-            processName: process.name,
-            detail: "Sent SIGTERM to \(process.name) (PID \(process.pid)).",
+            pid: liveProcess.pid,
+            processName: liveProcess.name,
+            detail: "Sent SIGTERM to \(liveProcess.name) (PID \(liveProcess.pid)).",
             succeeded: true
         )
+    }
+
+    private func matchesSelectedProcess(_ live: NativeProcessActivity, selected: NativeProcessActivity) -> Bool {
+        live.ownerUserID == selected.ownerUserID
+            && live.name == selected.name
+            && URLPathSafety.standardized(URL(fileURLWithPath: live.command)).path == URLPathSafety.standardized(URL(fileURLWithPath: selected.command)).path
     }
 }

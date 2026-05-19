@@ -1,29 +1,29 @@
 import AppKit
+import SwiftUI
 import SKMoleShared
 
 @MainActor
-final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
+final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let sampler = MenuBarHelperSampler()
     private let settingsStore = MenuBarCompanionSettingsStore()
     private let alertEvaluator = MenuBarAlertEvaluator()
+    private let updateStatusStore = AppUpdateStatusStore()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let menu = NSMenu()
-
-    private let alertsHeaderItem = NSMenuItem(title: "No active alerts", action: nil, keyEquivalent: "")
-    private let sensorsHeaderItem = NSMenuItem(title: "Live sensors", action: nil, keyEquivalent: "")
-    private let cpuItem = NSMenuItem(title: "CPU: --", action: nil, keyEquivalent: "")
-    private let memoryItem = NSMenuItem(title: "Memory: --", action: nil, keyEquivalent: "")
-    private let pressureItem = NSMenuItem(title: "Memory Pressure: --", action: nil, keyEquivalent: "")
-    private let thermalItem = NSMenuItem(title: "Thermal: --", action: nil, keyEquivalent: "")
-    private let diskItem = NSMenuItem(title: "Disk Free: --", action: nil, keyEquivalent: "")
-    private let networkItem = NSMenuItem(title: "Network: --", action: nil, keyEquivalent: "")
-    private let powerItem = NSMenuItem(title: "Power: --", action: nil, keyEquivalent: "")
-    private let processItem = NSMenuItem(title: "Top Process: --", action: nil, keyEquivalent: "")
-    private var alertMenuItems: [NSMenuItem] = []
+    private let popover = NSPopover()
+    private let contentModel = MenuBarCompanionContentModel()
+    private let popoverWidth: CGFloat = 336
+    private var cachedSettings = MenuBarCompanionSettings.default
+    private var lastSettingsLoadDate = Date.distantPast
+    private var lastUpdateSnapshotLoadDate = Date.distantPast
+    private let settingsReloadInterval: TimeInterval = 5
+    private let updateSnapshotReloadInterval: TimeInterval = 15
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
-        setupMenu()
+        setupPopover()
+        cachedSettings = settingsStore.load()
+        lastSettingsLoadDate = .now
+        refreshSharedUpdateSummary(force: true)
 
         sampler.start { [weak self] snapshot in
             Task { @MainActor [weak self] in
@@ -42,101 +42,123 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         button.image = NSImage(systemSymbolName: "aqi.medium", accessibilityDescription: "SK Mole Companion")
         button.imagePosition = .imageOnly
         button.title = ""
-        button.font = .systemFont(ofSize: 12, weight: .semibold)
+        button.target = self
+        button.action = #selector(togglePopover(_:))
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
-    private func setupMenu() {
-        [alertsHeaderItem, sensorsHeaderItem].forEach { $0.isEnabled = false }
-        [cpuItem, memoryItem, pressureItem, thermalItem, diskItem, networkItem, powerItem, processItem].forEach {
-            $0.isEnabled = false
+    private func setupPopover() {
+        popover.behavior = .semitransient
+        popover.animates = true
+        popover.delegate = self
+        popover.contentSize = NSSize(width: popoverWidth, height: preferredPopoverHeight(anchor: nil))
+        popover.contentViewController = NSHostingController(
+            rootView: MenuBarCompanionPopoverView(
+                model: contentModel,
+                openMainApp: { [weak self] in self?.openMainApp() },
+                openUpdates: { [weak self] in self?.openUpdates() },
+                openNetwork: { [weak self] in self?.openNetworkInspector() },
+                openProcesses: { [weak self] in self?.openProcesses() },
+                openSmartCare: { [weak self] in self?.openSmartCare() },
+                openPrivacySecurity: { [weak self] in self?.openPrivacySecurity() },
+                quitMainApp: { [weak self] in self?.quitMainApp() },
+                quitCompanion: { [weak self] in self?.quitCompanion() }
+            )
+        )
+    }
+
+    @objc
+    private func togglePopover(_ sender: Any?) {
+        cachedSettings = settingsStore.load()
+        lastSettingsLoadDate = .now
+        refreshSharedUpdateSummary(force: true)
+
+        guard let button = statusItem.button else {
+            return
         }
 
-        menu.addItem(alertsHeaderItem)
-        menu.addItem(.separator())
-        menu.addItem(sensorsHeaderItem)
-        [cpuItem, memoryItem, pressureItem, thermalItem, diskItem, networkItem, powerItem, processItem].forEach(menu.addItem(_:))
-
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Open SK Mole", action: #selector(openMainApp), keyEquivalent: "o"))
-        menu.addItem(NSMenuItem(title: "Open Network Inspector", action: #selector(openNetworkInspector), keyEquivalent: "n"))
-        menu.addItem(NSMenuItem(title: "Open Smart Care", action: #selector(openSmartCare), keyEquivalent: "s"))
-        menu.addItem(NSMenuItem(title: "Open Privacy & Security", action: #selector(openPrivacySecurity), keyEquivalent: ","))
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit SK Mole", action: #selector(quitMainApp), keyEquivalent: "q"))
-        menu.addItem(NSMenuItem(title: "Quit Companion", action: #selector(quitCompanion), keyEquivalent: ""))
-
-        menu.items.forEach { item in
-            item.target = self
+        if popover.isShown {
+            popover.performClose(sender)
+            sampler.setPopoverVisible(false)
+        } else {
+            popover.contentSize = NSSize(width: popoverWidth, height: preferredPopoverHeight(anchor: button.window?.screen))
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            sampler.setPopoverVisible(true)
+            NSApp.activate(ignoringOtherApps: true)
         }
+    }
 
-        statusItem.menu = menu
+    func popoverDidClose(_ notification: Notification) {
+        sampler.setPopoverVisible(false)
+    }
+
+    private func preferredPopoverHeight(anchor screen: NSScreen?) -> CGFloat {
+        let visibleHeight = (screen ?? NSScreen.main)?.visibleFrame.height ?? 720
+        return max(280, min(640, visibleHeight - 80))
     }
 
     private func apply(snapshot: MenuBarSnapshot) {
-        let settings = settingsStore.load()
+        let settings = loadSettingsIfNeeded()
         let activeAlerts = alertEvaluator.evaluate(snapshot: snapshot, settings: settings)
-        refreshAlertMenu(activeAlerts)
-        applyStatusPresentation(snapshot: snapshot, settings: settings, activeAlerts: activeAlerts)
+        refreshSharedUpdateSummary()
 
-        cpuItem.title = "CPU: \(Int((snapshot.cpuUsage * 100).rounded()))%"
-        memoryItem.title = "Memory: \(MenuBarHelperFormatting.formatBytes(snapshot.memoryUsed)) of \(MenuBarHelperFormatting.formatBytes(snapshot.memoryTotal)) • \(Int((snapshot.memoryUsage * 100).rounded()))%"
-        pressureItem.title = "Memory Pressure: \(pressureTitle(for: snapshot.memoryPressureLevel))"
-        thermalItem.title = "Thermal: \(thermalTitle(for: snapshot.thermalStateLevel))"
-        diskItem.title = "Disk Free: \(MenuBarHelperFormatting.formatBytes(snapshot.diskFreeBytes)) • \(Int((snapshot.diskFreeRatio * 100).rounded()))% free"
-        networkItem.title = "Network: ↓ \(MenuBarHelperFormatting.formatRate(snapshot.downloadRate)) ↑ \(MenuBarHelperFormatting.formatRate(snapshot.uploadRate))"
-        powerItem.title = "Power: \(snapshot.powerSummary ?? "Unavailable")"
+        contentModel.snapshot = snapshot
+        contentModel.activeAlerts = activeAlerts
+        applyStatusPresentation(
+            snapshot: snapshot,
+            activeAlerts: activeAlerts,
+            updateSnapshot: contentModel.updateSnapshot,
+            settings: settings
+        )
+    }
 
-        if let topProcessName = snapshot.topProcessName, let topProcessCPU = snapshot.topProcessCPU {
-            let memorySuffix = snapshot.topProcessMemoryBytes.map { " • \(MenuBarHelperFormatting.formatBytes($0))" } ?? ""
-            processItem.title = "Top Process: \(topProcessName) • \(String(format: "%.1f%% CPU", topProcessCPU))\(memorySuffix)"
-        } else {
-            processItem.title = "Top Process: Sampling..."
+    private func refreshSharedUpdateSummary(force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastUpdateSnapshotLoadDate) >= updateSnapshotReloadInterval else {
+            return
         }
+
+        contentModel.updateSnapshot = updateStatusStore.load()
+        lastUpdateSnapshotLoadDate = now
+    }
+
+    private func loadSettingsIfNeeded() -> MenuBarCompanionSettings {
+        let now = Date()
+        guard now.timeIntervalSince(lastSettingsLoadDate) >= settingsReloadInterval else {
+            return cachedSettings
+        }
+
+        cachedSettings = settingsStore.load()
+        lastSettingsLoadDate = now
+        return cachedSettings
     }
 
     private func applyStatusPresentation(
         snapshot: MenuBarSnapshot,
-        settings: MenuBarCompanionSettings,
-        activeAlerts: [MenuBarActiveAlert]
+        activeAlerts: [MenuBarActiveAlert],
+        updateSnapshot: AppUpdateStatusSnapshot?,
+        settings: MenuBarCompanionSettings
     ) {
         guard let button = statusItem.button else { return }
 
-        if activeAlerts.isEmpty {
-            let metrics = settings.visibleStatusMetrics.isEmpty ? [.cpu] : settings.visibleStatusMetrics
-            button.image = NSImage(systemSymbolName: statusSymbol(for: metrics.first ?? .cpu), accessibilityDescription: "SK Mole Companion")
-            button.title = ""
-            button.toolTip = metrics
-                .map { combinedMetricText(for: $0, snapshot: snapshot) }
-                .joined(separator: " • ")
-        } else {
+        if !activeAlerts.isEmpty {
             button.image = NSImage(systemSymbolName: "exclamationmark.circle.fill", accessibilityDescription: "SK Mole alerts")
-            button.title = ""
             button.toolTip = activeAlerts.map(\.title).joined(separator: "\n")
-        }
-    }
-
-    private func refreshAlertMenu(_ activeAlerts: [MenuBarActiveAlert]) {
-        alertMenuItems.forEach(menu.removeItem(_:))
-        alertMenuItems.removeAll()
-
-        if activeAlerts.isEmpty {
-            alertsHeaderItem.title = "No active alerts"
             return
         }
 
-        alertsHeaderItem.title = "\(activeAlerts.count) active alert\(activeAlerts.count == 1 ? "" : "s")"
-
-        for (index, alert) in activeAlerts.enumerated() {
-            let item = NSMenuItem(
-                title: "\(alert.title): \(alert.detail)",
-                action: #selector(openSmartCare),
-                keyEquivalent: ""
-            )
-            item.image = NSImage(systemSymbolName: alert.rule.metric.symbol, accessibilityDescription: alert.title)
-            item.target = self
-            menu.insertItem(item, at: 1 + index)
-            alertMenuItems.append(item)
+        if let updateSnapshot, updateSnapshot.actionableCount > 0 {
+            button.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath.circle.fill", accessibilityDescription: "SK Mole updates")
+        } else {
+            button.image = NSImage(systemSymbolName: statusSymbol(for: settings.visibleStatusMetrics.first ?? .cpu), accessibilityDescription: "SK Mole Companion")
         }
+
+        let metrics = settings.visibleStatusMetrics.isEmpty ? [.cpu] : settings.visibleStatusMetrics
+        var tooltipParts = metrics.map { combinedMetricText(for: $0, snapshot: snapshot) }
+        if let updateSnapshot {
+            tooltipParts.append("Updates \(updateSnapshot.actionableCount) actionable")
+        }
+        button.toolTip = tooltipParts.joined(separator: " • ")
     }
 
     private func combinedMetricText(for metric: MenuBarStatusMetric, snapshot: MenuBarSnapshot) -> String {
@@ -197,6 +219,15 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func open(sectionSlug: String) {
+        if let deepLink = URL(string: "\(MenuBarHelperConstants.mainAppURLScheme)://section/\(sectionSlug)"),
+           NSWorkspace.shared.open(deepLink) {
+            return
+        }
+
+        openMainApp()
+    }
+
     @objc
     private func openMainApp() {
         guard let mainAppURL = mainApplicationURL() else { return }
@@ -210,23 +241,23 @@ final class MenuBarHelperAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc
-    private func openNetworkInspector() {
-        if let deepLink = URL(string: "\(MenuBarHelperConstants.mainAppURLScheme)://section/network"),
-           NSWorkspace.shared.open(deepLink) {
-            return
-        }
+    private func openUpdates() {
+        open(sectionSlug: "updates")
+    }
 
-        openMainApp()
+    @objc
+    private func openNetworkInspector() {
+        open(sectionSlug: "network")
+    }
+
+    @objc
+    private func openProcesses() {
+        open(sectionSlug: "processes")
     }
 
     @objc
     private func openSmartCare() {
-        if let deepLink = URL(string: "\(MenuBarHelperConstants.mainAppURLScheme)://section/smart-care"),
-           NSWorkspace.shared.open(deepLink) {
-            return
-        }
-
-        openMainApp()
+        open(sectionSlug: "smart-care")
     }
 
     @objc

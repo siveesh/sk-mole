@@ -57,8 +57,8 @@ struct PrivilegedHelperManager: Sendable {
         return status()
     }
 
-    func diagnosticSummary() -> String? {
-        if let signingIssue = signingIssueSummary() {
+    func diagnosticSummary() async -> String? {
+        if let signingIssue = await signingIssueSummary() {
             return signingIssue
         }
 
@@ -66,23 +66,16 @@ struct PrivilegedHelperManager: Sendable {
             return nil
         }
 
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["print", "system/\(PrivilegedHelperConstants.daemonLabel)"]
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
+        guard let result = try? await ProcessRunner.run(
+            executable: "/bin/launchctl",
+            arguments: ["print", "system/\(PrivilegedHelperConstants.daemonLabel)"],
+            timeout: 6,
+            maxOutputBytes: 512 * 1_024
+        ) else {
             return nil
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(decoding: data, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let output = result.output
 
         guard !output.isEmpty else {
             return nil
@@ -106,21 +99,21 @@ struct PrivilegedHelperManager: Sendable {
             return "launchctl: " + lines.joined(separator: " | ")
         }
 
-        if process.terminationStatus != 0 {
+        if result.terminationStatus != 0 {
             return "launchctl: \(output)"
         }
 
         return nil
     }
 
-    private func signingIssueSummary() -> String? {
+    private func signingIssueSummary() async -> String? {
         if let helperExecutableURL,
-           let helperSignature = signatureSummary(for: helperExecutableURL),
+           let helperSignature = await signatureSummary(for: helperExecutableURL),
            helperSignature.requiresTrustedSigning {
             return "The embedded privileged helper is \(helperSignature.signatureDescription). macOS blocks launch daemons unless they are signed with a trusted Apple certificate. Rebuild SK Mole with `SKMOLE_CODESIGN_IDENTITY` set to a valid `Apple Development` or `Developer ID Application` identity, then reinstall the helper."
         }
 
-        if let appSignature = signatureSummary(for: Bundle.main.bundleURL),
+        if let appSignature = await signatureSummary(for: Bundle.main.bundleURL),
            appSignature.requiresTrustedSigning {
             return "The main app bundle is \(appSignature.signatureDescription). The privileged helper cannot satisfy macOS launch constraints until the whole app is signed with a trusted Apple certificate and reinstalled."
         }
@@ -128,27 +121,21 @@ struct PrivilegedHelperManager: Sendable {
         return nil
     }
 
-    private func signatureSummary(for url: URL) -> SignatureSummary? {
+    private func signatureSummary(for url: URL) async -> SignatureSummary? {
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/codesign") || FileManager.default.fileExists(atPath: "/usr/bin/codesign") else {
             return nil
         }
 
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        process.arguments = ["-dv", "--verbose=4", url.path]
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
+        guard let result = try? await ProcessRunner.run(
+            executable: "/usr/bin/codesign",
+            arguments: ["-dv", "--verbose=4", url.path],
+            timeout: 8,
+            maxOutputBytes: 512 * 1_024
+        ) else {
             return nil
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(decoding: data, as: UTF8.self)
+        let output = result.output
 
         let signature = output
             .split(whereSeparator: \.isNewline)

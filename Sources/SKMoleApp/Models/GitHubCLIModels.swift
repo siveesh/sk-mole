@@ -47,7 +47,12 @@ struct GitHubCLIStatus: Hashable {
             return "Authenticate with GitHub CLI in your browser, then SK Mole can verify your session and list repositories owned by the signed-in account."
         }
 
-        let displayName = userName?.isEmpty == false ? "\(userName!) (\(userLogin))" : userLogin
+        let displayName: String
+        if let userName, !userName.isEmpty {
+            displayName = "\(userName) (\(userLogin))"
+        } else {
+            displayName = userLogin
+        }
         return "Authenticated on \(host ?? "github.com") as \(displayName)."
     }
 }

@@ -2,12 +2,14 @@ import AppKit
 import Darwin
 import Foundation
 import Security
+import SKMoleShared
 
 actor QuarantineAuditService {
     private let fileManager = FileManager.default
     private let guardService: SystemGuard
     private let sizer: DirectorySizer
     private let home = FileManager.default.homeDirectoryForCurrentUser
+    private let maxDiscoveredApplications = 2_000
 
     init(guardService: SystemGuard, sizer: DirectorySizer) {
         self.guardService = guardService
@@ -32,7 +34,10 @@ actor QuarantineAuditService {
                 return []
             }
 
-            appURLs.append(contentsOf: findApplications(in: root))
+            appURLs.append(contentsOf: findApplications(in: root, limit: max(0, maxDiscoveredApplications - appURLs.count)))
+            if appURLs.count >= maxDiscoveredApplications {
+                break
+            }
         }
 
         let uniqueURLs = Array(Set(appURLs))
@@ -68,25 +73,17 @@ actor QuarantineAuditService {
 
         for app in apps {
             do {
-                guard await guardService.canOperate(on: app.url, purpose: .quarantine) else {
-                    throw NSError(
-                        domain: "SKMole.Quarantine",
-                        code: 4,
-                        userInfo: [NSLocalizedDescriptionKey: "Blocked xattr removal for unsupported location: \(app.url.path)"]
-                    )
-                }
+                let identity = try await guardService.operationIdentity(for: app.url, purpose: .quarantine)
+                try guardService.validateStableOperationTarget(app.url, expectedIdentity: identity)
 
-                let result = try await runProcess(
-                    executable: "/usr/bin/xattr",
-                    arguments: ["-d", "com.apple.quarantine", app.url.path]
-                )
-                let output = result.output.isEmpty ? "Removed quarantine attribute from \(app.url.path)" : result.output
+                try removeQuarantineAttribute(from: app.url, expectedIdentity: identity)
+                let output = "Removed quarantine attribute from \(app.url.path)"
 
                 logs.append(
                     OptimizationLog(
                         actionTitle: "xattr: \(app.name)",
                         output: output,
-                        succeeded: result.terminationStatus == 0,
+                        succeeded: true,
                         timestamp: .now
                     )
                 )
@@ -131,7 +128,11 @@ actor QuarantineAuditService {
         )
     }
 
-    private func findApplications(in root: URL) -> [URL] {
+    private func findApplications(in root: URL, limit: Int) -> [URL] {
+        guard limit > 0 else {
+            return []
+        }
+
         guard let enumerator = fileManager.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
@@ -147,10 +148,33 @@ actor QuarantineAuditService {
             if url.pathExtension.lowercased() == "app" {
                 results.append(url)
                 enumerator.skipDescendants()
+                if results.count >= limit {
+                    break
+                }
             }
         }
 
         return results
+    }
+
+    private func removeQuarantineAttribute(from url: URL, expectedIdentity: GuardedFileIdentity) throws {
+        try guardService.validateStableOperationTarget(url, expectedIdentity: expectedIdentity)
+
+        let result = url.path.withCString { pathPointer in
+            "com.apple.quarantine".withCString { attributePointer in
+                removexattr(pathPointer, attributePointer, 0)
+            }
+        }
+
+        if result == 0 || errno == ENOATTR {
+            return
+        }
+
+        throw NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(errno),
+            userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))]
+        )
     }
 
     private func readExtendedAttribute(named attribute: String, at url: URL) -> String? {
@@ -194,28 +218,13 @@ actor QuarantineAuditService {
     }
 
     private func runProcess(executable: String, arguments: [String]) async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                let pipe = Pipe()
-
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-                process.standardOutput = pipe
-                process.standardError = pipe
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(decoding: data, as: UTF8.self)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    continuation.resume(returning: ProcessResult(output: output, terminationStatus: process.terminationStatus))
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
+        let result = try await ProcessRunner.run(
+            executable: executable,
+            arguments: arguments,
+            timeout: 15,
+            maxOutputBytes: 512 * 1_024
+        )
+        return ProcessResult(output: result.output, terminationStatus: result.terminationStatus)
     }
 
     private func sorted(_ apps: [QuarantinedApplication]) -> [QuarantinedApplication] {

@@ -1,29 +1,26 @@
 import Foundation
 
 enum ByteFormatting {
-    private static func bytesFormatter() -> ByteCountFormatter {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
-        formatter.countStyle = .file
-        formatter.includesUnit = true
-        formatter.isAdaptive = true
-        return formatter
-    }
-
-    private static func speedFormatter() -> ByteCountFormatter {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        formatter.countStyle = .binary
-        formatter.includesUnit = true
-        formatter.isAdaptive = true
-        return formatter
-    }
-
     static func format(_ bytes: UInt64) -> String {
-        bytesFormatter().string(fromByteCount: Int64(bytes))
+        format(bytes, allowedUnits: [("TB", 1 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)])
     }
 
     static func formatRate(_ bytesPerSecond: UInt64) -> String {
-        "\(speedFormatter().string(fromByteCount: Int64(bytesPerSecond)))/s"
+        "\(format(bytesPerSecond, allowedUnits: [("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)]))/s"
+    }
+
+    private static func format(_ bytes: UInt64, allowedUnits: [(String, UInt64)]) -> String {
+        guard bytes >= 1_024 else {
+            return "\(bytes) bytes"
+        }
+
+        guard let unit = allowedUnits.first(where: { bytes >= $0.1 }) ?? allowedUnits.last else {
+            return "\(bytes) bytes"
+        }
+        let value = Double(bytes) / Double(unit.1)
+        let formatted = value >= 10 || value.rounded() == value
+            ? String(format: "%.0f", value)
+            : String(format: "%.1f", value)
+        return "\(formatted) \(unit.0)"
     }
 }

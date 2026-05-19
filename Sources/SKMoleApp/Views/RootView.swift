@@ -86,6 +86,8 @@ struct RootView: View {
         switch model.selection {
         case .dashboard:
             DashboardView(model: model)
+        case .updates:
+            UpdatesView(model: model)
         case .homebrew:
             HomebrewView(model: model)
         case .fileIntelligence:

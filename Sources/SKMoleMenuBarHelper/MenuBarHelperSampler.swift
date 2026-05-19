@@ -4,6 +4,23 @@ import IOKit
 import IOKit.ps
 import SKMoleShared
 
+struct MenuBarTopProcessSummary: Identifiable, Hashable {
+    let pid: Int32
+    let name: String
+    let cpuPercent: Double
+    let memoryBytes: UInt64
+
+    var id: Int32 { pid }
+}
+
+struct MenuBarSystemConfiguration: Hashable {
+    let modelName: String
+    let chipName: String
+    let memoryBytes: UInt64
+    let osVersion: String
+    let uptime: String
+}
+
 struct MenuBarSnapshot {
     let cpuUsage: Double
     let memoryUsage: Double
@@ -20,10 +37,12 @@ struct MenuBarSnapshot {
     let topProcessName: String?
     let topProcessCPU: Double?
     let topProcessMemoryBytes: UInt64?
+    let topProcesses: [MenuBarTopProcessSummary]
     let powerSummary: String?
+    let systemConfiguration: MenuBarSystemConfiguration
 }
 
-final class MenuBarHelperSampler {
+final class MenuBarHelperSampler: @unchecked Sendable {
     private struct NetworkSample {
         let incoming: UInt64
         let outgoing: UInt64
@@ -31,20 +50,26 @@ final class MenuBarHelperSampler {
     }
 
     private let queue = DispatchQueue(label: "com.siveesh.skmole.menubar.metrics", qos: .utility)
-    private let processRefreshInterval: TimeInterval = 5
+    private let visibleProcessRefreshInterval: TimeInterval = 5
+    private let hiddenProcessRefreshInterval: TimeInterval = 15
+    private let powerRefreshInterval: TimeInterval = 20
     private let processSampler = NativeProcessSampler()
+    private let systemConfiguration = MenuBarHelperSampler.readSystemConfiguration()
 
     private var timer: DispatchSourceTimer?
     private var previousPerCoreTicks: [[UInt32]] = []
     private var previousNetworkSample: NetworkSample?
-    private var cachedTopProcess: (name: String, cpu: Double, memoryBytes: UInt64)?
+    private var cachedTopProcesses: [MenuBarTopProcessSummary] = []
     private var lastTopProcessSampleDate = Date.distantPast
+    private var cachedPowerDetails: (summary: String?, batteryLevel: Double?) = (nil, nil)
+    private var lastPowerSampleDate = Date.distantPast
+    private var isPopoverVisible = false
 
     func start(handler: @escaping (MenuBarSnapshot) -> Void) {
         stop()
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .seconds(1))
+        timer.schedule(deadline: .now(), repeating: .seconds(3))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             handler(self.captureSnapshot())
@@ -58,13 +83,22 @@ final class MenuBarHelperSampler {
         timer = nil
     }
 
+    func setPopoverVisible(_ isVisible: Bool) {
+        queue.async { [weak self] in
+            guard let self, let timer = self.timer else { return }
+            self.isPopoverVisible = isVisible
+            timer.schedule(deadline: .now(), repeating: isVisible ? .seconds(1) : .seconds(3))
+        }
+    }
+
     private func captureSnapshot() -> MenuBarSnapshot {
         let cpu = currentCPUUsage()
         let memory = currentMemoryUsage()
         let disk = currentDiskUsage()
         let network = currentNetworkRates()
-        let topProcess = currentTopProcess()
-        let power = Self.readPowerDetails()
+        let topProcesses = currentTopProcesses()
+        let topProcess = topProcesses.first
+        let power = currentPowerDetails()
 
         return MenuBarSnapshot(
             cpuUsage: cpu,
@@ -85,9 +119,11 @@ final class MenuBarHelperSampler {
             uploadRate: network.up,
             batteryLevel: power.batteryLevel,
             topProcessName: topProcess?.name,
-            topProcessCPU: topProcess?.cpu,
+            topProcessCPU: topProcess?.cpuPercent,
             topProcessMemoryBytes: topProcess?.memoryBytes,
-            powerSummary: power.summary
+            topProcesses: topProcesses,
+            powerSummary: power.summary,
+            systemConfiguration: systemConfiguration
         )
     }
 
@@ -198,19 +234,36 @@ final class MenuBarHelperSampler {
         )
     }
 
-    private func currentTopProcess() -> (name: String, cpu: Double, memoryBytes: UInt64)? {
+    private func currentTopProcesses() -> [MenuBarTopProcessSummary] {
         let now = Date()
-        guard now.timeIntervalSince(lastTopProcessSampleDate) >= processRefreshInterval else {
-            return cachedTopProcess
+        let interval = isPopoverVisible ? visibleProcessRefreshInterval : hiddenProcessRefreshInterval
+        guard now.timeIntervalSince(lastTopProcessSampleDate) >= interval else {
+            return cachedTopProcesses
         }
 
         lastTopProcessSampleDate = now
 
-        if let process = processSampler.sampleTopProcesses(limit: 1).first {
-            cachedTopProcess = (process.name, process.cpuPercent, process.memoryBytes)
+        cachedTopProcesses = processSampler.sampleTopProcesses(limit: 5).map {
+            MenuBarTopProcessSummary(
+                pid: $0.pid,
+                name: $0.name,
+                cpuPercent: $0.cpuPercent,
+                memoryBytes: $0.memoryBytes
+            )
         }
 
-        return cachedTopProcess
+        return cachedTopProcesses
+    }
+
+    private func currentPowerDetails() -> (summary: String?, batteryLevel: Double?) {
+        let now = Date()
+        guard now.timeIntervalSince(lastPowerSampleDate) >= powerRefreshInterval else {
+            return cachedPowerDetails
+        }
+
+        cachedPowerDetails = Self.readPowerDetails()
+        lastPowerSampleDate = now
+        return cachedPowerDetails
     }
 
     private static func readNetworkTotals() -> (incoming: UInt64, outgoing: UInt64) {
@@ -262,11 +315,14 @@ final class MenuBarHelperSampler {
             return (sourceType, nil)
         }
 
-        let currentCapacity = description[kIOPSCurrentCapacityKey as String] as? Double
-        let maxCapacity = description[kIOPSMaxCapacityKey as String] as? Double
-        let batteryLevel = (currentCapacity != nil && maxCapacity != nil && maxCapacity != 0)
-            ? max(0, min(1, currentCapacity! / maxCapacity!))
-            : nil
+        let batteryLevel: Double?
+        if let currentCapacity = description[kIOPSCurrentCapacityKey as String] as? Double,
+           let maxCapacity = description[kIOPSMaxCapacityKey as String] as? Double,
+           maxCapacity > 0 {
+            batteryLevel = max(0, min(1, currentCapacity / maxCapacity))
+        } else {
+            batteryLevel = nil
+        }
 
         if let batteryLevel {
             let percentage = Int((batteryLevel * 100).rounded())
@@ -316,5 +372,84 @@ final class MenuBarHelperSampler {
         @unknown default:
             return 0
         }
+    }
+
+    private static func readSystemConfiguration() -> MenuBarSystemConfiguration {
+        let processInfo = ProcessInfo.processInfo
+        let os = processInfo.operatingSystemVersion
+        let osVersion = os.patchVersion > 0
+            ? "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
+            : "macOS \(os.majorVersion).\(os.minorVersion)"
+        let modelIdentifier = sysctlString("hw.model") ?? "Mac"
+        let modelName = marketingModelName(for: modelIdentifier)
+        let chipName = normalizedChipName(sysctlString("machdep.cpu.brand_string"))
+
+        return MenuBarSystemConfiguration(
+            modelName: modelName,
+            chipName: chipName,
+            memoryBytes: processInfo.physicalMemory,
+            osVersion: osVersion,
+            uptime: uptimeString(processInfo.systemUptime)
+        )
+    }
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else {
+            return nil
+        }
+
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else {
+            return nil
+        }
+
+        let value = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private static func normalizedChipName(_ rawValue: String?) -> String {
+        guard let rawValue, !rawValue.isEmpty else {
+            return "Apple Silicon"
+        }
+
+        return rawValue
+            .replacingOccurrences(of: "Apple ", with: "")
+            .replacingOccurrences(of: " processor", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func marketingModelName(for identifier: String) -> String {
+        switch identifier {
+        case "Mac13,1", "Mac13,2":
+            return "Mac Studio 2022"
+        case "Mac14,13", "Mac14,14":
+            return "Mac Studio 2023"
+        case "Mac15,13", "Mac15,14":
+            return "Mac Studio 2025"
+        case "Mac14,3", "Mac14,8":
+            return "Mac mini 2023"
+        case "Mac16,10", "Mac16,11":
+            return "Mac mini 2024"
+        default:
+            return identifier
+        }
+    }
+
+    private static func uptimeString(_ uptime: TimeInterval) -> String {
+        let totalHours = max(0, Int(uptime / 3_600))
+        let days = totalHours / 24
+        let hours = totalHours % 24
+
+        if days > 0 {
+            return "up \(days)d \(hours)h"
+        }
+
+        if hours > 0 {
+            return "up \(hours)h"
+        }
+
+        return "up <1h"
     }
 }

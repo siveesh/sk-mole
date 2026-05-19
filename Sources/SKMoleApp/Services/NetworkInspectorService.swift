@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import SKMoleShared
 
 actor NetworkInspectorService {
     private struct InterfaceSample {
@@ -275,31 +276,21 @@ actor NetworkInspectorService {
 
 private enum ProcessExecutor {
     static func run(executableURL: URL, arguments: [String]) async throws -> String {
-        try await Task.detached(priority: .utility) {
-            let process = Process()
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
-            process.executableURL = executableURL
-            process.arguments = arguments
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
+        let result = try await ProcessRunner.run(
+            executable: executableURL.path,
+            arguments: arguments,
+            timeout: 12,
+            maxOutputBytes: 8 * 1_024 * 1_024
+        )
 
-            try process.run()
-            process.waitUntilExit()
+        guard result.terminationStatus == 0 || !result.output.isEmpty else {
+            throw NSError(
+                domain: "SKMole.NetworkInspector",
+                code: Int(result.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "Network inspector command failed."]
+            )
+        }
 
-            let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            let error = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-            guard process.terminationStatus == 0 || !output.isEmpty else {
-                let message = String(data: error, encoding: .utf8) ?? "Network inspector command failed."
-                throw NSError(
-                    domain: "SKMole.NetworkInspector",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: message]
-                )
-            }
-
-            return String(decoding: output, as: UTF8.self)
-        }.value
+        return result.output
     }
 }
